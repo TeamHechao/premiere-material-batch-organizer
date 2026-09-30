@@ -10,6 +10,8 @@ const distDirectory = path.join(projectRoot, "dist");
 const sourceFiles = [
   "core.js",
   "scan-policy.js",
+  "preferences.js",
+  "workspace-session.js",
   "state.js",
   "transaction.js",
   "recovery.js",

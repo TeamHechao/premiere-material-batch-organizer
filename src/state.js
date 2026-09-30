@@ -11,7 +11,7 @@
   "use strict";
 
   var SCHEMA_VERSION = 2;
-  var COLLECTION_POLICY_VERSION = 3;
+  var COLLECTION_POLICY_VERSION = 4;
   var HISTORY_LIMIT = 200;
   var TRANSACTION_LIMIT = 100;
 
@@ -131,6 +131,7 @@
     if (raw.deferredTransactions != null && (!Array.isArray(raw.deferredTransactions)
       || raw.deferredTransactions.some(function (entry) { return !isRecord(entry) || !entry.id || !Core.isAbsoluteLocalPath(entry.sourcePath) || !Core.isSafeRelativePath(entry.targetRelativePath); }))) return false;
     var pendingItems = (raw.deferredTransactions || []).concat(raw.pendingTransaction ? [raw.pendingTransaction] : []);
+    if (pendingItems.some(function (item) { return hasOwn(item, "deleteSource") && typeof item.deleteSource !== "boolean"; })) return false;
     var pendingIds = pendingItems.map(function (item) { return item.id; }).filter(Boolean);
     if (new Set(pendingIds).size !== pendingIds.length) return false;
     if (pendingItems.some(function (item) { return item.backgroundTask != null && !validBackgroundTask(item.backgroundTask); })) return false;
@@ -463,6 +464,8 @@
     var currentId = String(next.pendingTransaction.id || "");
     var nextId = String(details && details.id || currentId);
     if (currentId && nextId && currentId !== nextId) throw new Error("事务 ID 与待处理记录不一致");
+    if (details && Object.prototype.hasOwnProperty.call(details, "deleteSource")
+      && details.deleteSource !== next.pendingTransaction.deleteSource) throw new Error("事务开始后不能改变保留原件的选择");
     next.pendingTransaction = Object.assign({}, next.pendingTransaction, clone(details || {}), {
       id: currentId || nextId,
       updatedAt: iso(at),
@@ -645,7 +648,7 @@
       itemCount: Math.max(0, Math.floor(Number(mergeTransactionField(result, pending, "itemCount")) || itemIds.length)),
       itemIds: itemIds.map(function (itemId) { return String(itemId || ""); }),
       itemSignatures: clone(itemSignatures),
-      sourceRetained: false,
+      sourceRetained: mergeTransactionField(result, pending, "deleteSource") === false,
       sourceChanged: result.sourceChanged === true,
       cleanupPending: false,
     };
@@ -736,6 +739,7 @@
       movedAt: record.at,
       sourceFingerprint: clone(record.sourceFingerprint || {}),
       targetFingerprint: clone(record.targetFingerprint || {}),
+      deleteSource: record.deleteSource,
     };
     var existingMappings = Array.isArray(next.pathMappings[sourceKey])
       ? next.pathMappings[sourceKey]
@@ -755,7 +759,7 @@
     next.pathMappings[sourceKey] = existingMappings;
     next.knownMedia[sourceKey] = {
       path: sourcePath,
-      status: "moved",
+      status: record.sourceRetained ? "copied" : "moved",
       targetRelativePath: record.targetRelativePath,
       lastSeenAt: record.at,
     };

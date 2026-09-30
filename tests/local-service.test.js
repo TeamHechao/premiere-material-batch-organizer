@@ -8,7 +8,9 @@ const Bridge = require("../src/recycle-bridge");
 const Service = require("../src/file-service");
 const enabled = process.platform === "win32" && process.env.MATERIAL_NATIVE_SMOKE === "1";
 
-test("后台助手不经过宿主启动接口完成精确读取、真实回收、凭据复核和安全停机", { skip: !enabled, timeout: 40000 }, async () => {
+// Includes 26 serial native launches plus recycle/query/stop. This is a suite
+// budget; each actual bridge request retains its production timeout.
+test("后台助手不经过宿主启动接口完成精确读取、真实回收、凭据复核和安全停机", { skip: !enabled, timeout: 120000 }, async () => {
   const root = path.resolve(__dirname, "../work/service-smoke");
   await fs.mkdir(root, { recursive: true });
   const folder = await fs.mkdtemp(path.join(root, "run-"));
@@ -58,6 +60,8 @@ test("后台助手不经过宿主启动接口完成精确读取、真实回收�
     assert.equal(receipt.status,"recycled");
     assert.match(receipt.receiptId,/^[0-9a-f]{64}$/);
     assert.equal((await api.recycle(request)).receiptId,receipt.receiptId);
+    assert.deepEqual(await fs.readdir(path.join(workspaceRoot, ".premiere-material-recycle")), []);
+    await assert.rejects(fs.stat(statePath + ".recycle-" + request.id + ".issued"), {code:"ENOENT"});
     await assert.rejects(fs.stat(sourcePath),{code:"ENOENT"});
     await assert.rejects(fs.stat(path.join(folder,badId+".probe-result.json")),{code:"ENOENT"});
     assert.equal(await fs.readFile(targetPath,"utf8"),"local-file-service-independent-fixture");

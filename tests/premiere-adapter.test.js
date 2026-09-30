@@ -36,6 +36,47 @@ test("Premiere 素材清单不完整时无法通过扫描安全门槛", async ()
   );
 });
 
+test("异步分箱转换拒绝后仍读取普通媒体，非媒体空转换安全跳过", async () => {
+  const clip = { getId: async () => "media-1", isSequence: async () => false,
+    getMediaFilePath: async () => "E:\\下载\\素材.mp4" };
+  const style = { getId: async () => "style-1", name: "文字样式" };
+  const ppro = {
+    FolderItem: { cast: async () => { throw new Error("Not a folder"); } },
+    ClipProjectItem: { cast: async item => item === clip ? clip : null },
+  };
+  const inventory = await Premiere.inventoryProject(ppro, { getRootItem: async () => ({getItems: async () => [clip, style]}) });
+  assert.deepEqual(inventory.warnings, []);
+  assert.equal(inventory.entries.length, 1);
+  assert.equal(inventory.entries[0].itemId, "media-1");
+});
+
+test("异步媒体类型读取失败不能当成非媒体跳过", async () => {
+  const ppro = { FolderItem: { cast: async () => null },
+    ClipProjectItem: { cast: async () => { throw new Error("Host unavailable"); } } };
+  const inventory = await Premiere.inventoryProject(ppro, { getRootItem: async () => ({getItems: async () => [{getId: async () => "item"}]}) });
+  assert.match(inventory.warnings[0], /Host unavailable/);
+  assert.throws(() => Premiere.assertCompleteInventory(inventory), {code: "MATERIAL_BATCH_INVENTORY_INCOMPLETE"});
+});
+
+test("无效或丢精度项目项 ID 不会被转成假的稳定身份", async () => {
+  for (const invalid of [undefined, null, "", "undefined", "null", Number.MAX_SAFE_INTEGER + 1, {}, -1]) {
+    const clip = { getId: async () => invalid, isSequence: async () => false, getMediaFilePath: async () => "E:\\下载\\素材.mp4" };
+    const ppro = { FolderItem: { cast: () => null }, ClipProjectItem: { cast: item => item } };
+    const inventory = await Premiere.inventoryProject(ppro, {getRootItem: async () => ({getItems: async () => [clip]})});
+    assert.equal(inventory.entries.length, 0);
+    assert.throws(() => Premiere.assertCompleteInventory(inventory), {code: "MATERIAL_BATCH_INVENTORY_INCOMPLETE"});
+  }
+});
+
+test("素材列表不完整和无 ID 的循环分箱不会静默通过或卡住", async () => {
+  const ppro = { FolderItem: {cast: item => item}, ClipProjectItem: {cast: () => null} };
+  await assert.rejects(Premiere.inventoryProject(ppro, {getRootItem: async () => ({getItems: async () => ({length: 0})})}), /完整的素材箱列表/);
+  const root = {getItems: async () => [root]};
+  const inventory = await Premiere.inventoryProject(ppro, {getRootItem: async () => root});
+  assert.equal(inventory.warnings.length, 1);
+  assert.throws(() => Premiere.assertCompleteInventory(inventory), {code: "MATERIAL_BATCH_INVENTORY_INCOMPLETE"});
+});
+
 test("重复项目项 ID 会产生警告并阻止整理，同时避免分箱递归死循环", async () => {
   const cyclicFolder = {
     name: "循环分箱",

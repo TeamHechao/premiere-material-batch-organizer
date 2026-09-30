@@ -498,7 +498,7 @@ test("隔离区中的原始文件仍存在时，恢复流程会阻止完成事�
   });
 });
 
-test("旧版 keep-source 事务现在要求移除旧副本", async () => {
+test("保留原件的选择在恢复时继续有效，不要求清理原位置", async () => {
   await withFixture(async ({ mediaRoot, source, target }) => {
     await fs.writeFile(source, "clip-data");
     const pending = await pendingFor(source);
@@ -507,8 +507,8 @@ test("旧版 keep-source 事务现在要求移除旧副本", async () => {
     pending.targetFingerprint = Transaction.fingerprintFromStat(await Transaction.lstatForIdentity(fs, target));
     const result = await Recovery.inspectPending({ fs, pending, targetPath: target, mediaRoot, linkedEntries: [{ itemId: "item-1", mediaPath: target }] });
     assert.equal(result.kind, "completed");
-    assert.equal(result.cleanupPending, true);
-    assert.equal(result.sourceRetained, false);
+    assert.equal(result.cleanupPending, false);
+    assert.equal(result.sourceRetained, true);
   });
 });
 

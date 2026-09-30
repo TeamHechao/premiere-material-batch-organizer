@@ -9,7 +9,7 @@
 
   function createHostFileSystem(nativeFs, readIdentity) {
     var adapted = { constants: nativeFs.constants, lstatSupportsBigInt: false };
-    ["lstat", "open", "close", "read", "write", "readFile", "writeFile", "mkdir", "rename", "unlink", "copyFile", "link"].forEach(function (name) {
+    ["lstat", "readdir", "open", "close", "read", "write", "readFile", "writeFile", "mkdir", "rename", "unlink", "copyFile", "link"].forEach(function (name) {
       var method = nativeFs[name];
       if (typeof method === "function") adapted[name] = method.bind(nativeFs);
     });

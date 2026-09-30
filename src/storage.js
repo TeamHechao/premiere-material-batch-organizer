@@ -591,28 +591,6 @@
     } catch (error) {}
   }
 
-  // 清理已完成回收留下的事务凭据。凭据只在 pendingTransaction 仍指向
-  // 同一个事务时有用；其他同名文件一律限定在状态文件所在目录，绝不碰素材。
-  async function cleanupOrphanedRecycleCredentials(fs, nativePath, projectState) {
-    if (!fs || typeof fs.readdir !== "function" || typeof fs.unlink !== "function") return 0;
-    var keepId = projectState && projectState.pendingTransaction
-      && projectState.pendingTransaction.recycleRequest
-      && String(projectState.pendingTransaction.recycleRequest.id || "").toLowerCase();
-    var root = Core.dirname(nativePath);
-    var removed = 0;
-    var names = [];
-    try { names = await fs.readdir(root); } catch (_) { return 0; }
-    for (var index = 0; index < names.length; index += 1) {
-      var entry = names[index];
-      var name = typeof entry === "string" ? entry : entry && entry.name;
-      if (!name) continue;
-      var match = /^\.premiere-material-space\.json\.recycle-([0-9a-f]{32})\.issued$/i.exec(String(name));
-      if (!match || (keepId && match[1].toLowerCase() === keepId)) continue;
-      try { await fs.unlink(Core.joinNativePath(root, name)); removed += 1; } catch (_) {}
-    }
-    return removed;
-  }
-
   async function writeJsonAtomic(fs, nativePath, value, options) {
     options = options || {};
     var backupPath = nativePath + ".bak";
@@ -743,7 +721,6 @@
     MISSING_REVISION: MISSING_REVISION,
     isAlreadyExistsError: isAlreadyExistsError,
     readJsonWithBackup: readJsonWithBackup,
-    cleanupOrphanedRecycleCredentials: cleanupOrphanedRecycleCredentials,
     statePath: statePath,
     writeJsonAtomic: writeJsonAtomic,
   };

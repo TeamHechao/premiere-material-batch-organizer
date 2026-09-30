@@ -56,11 +56,22 @@
   }
 
   async function castFolder(ppro, item) {
-    try { return ppro.FolderItem.cast(item); } catch (error) { return null; }
+    try { return await ppro.FolderItem.cast(item); } catch (error) { return null; }
   }
 
   async function castClip(ppro, item) {
-    try { return ppro.ClipProjectItem.cast(item); } catch (error) { return null; }
+    // A null cast means a non-media item. A rejected cast means we could not
+    // read the item and must not pretend the inventory is complete.
+    return await ppro.ClipProjectItem.cast(item);
+  }
+
+  async function readItemId(item) {
+    var value = await item.getId();
+    if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) value = String(value);
+    if (typeof value !== "string" || !value.trim() || value === "undefined" || value === "null") {
+      throw new Error("Premiere 返回了无效的项目项 ID");
+    }
+    return value;
   }
 
   async function inventoryProject(ppro, project) {
@@ -68,13 +79,20 @@
     var entries = [];
     var warnings = [];
     var seenItemIds = new Set();
+    var seenFolders = new Set();
 
     async function visit(folder) {
+      if (seenFolders.has(folder)) throw new Error("素材箱结构重复，无法完整读取");
+      seenFolders.add(folder);
       var items = await folder.getItems();
+      if (!Array.isArray(items)) throw new Error("Premiere 未返回完整的素材箱列表");
       for (var index = 0; index < items.length; index += 1) {
         var item = items[index];
         var itemId = "";
-        try { itemId = String(await item.getId()); } catch (error) {}
+        try { itemId = await readItemId(item); } catch (error) {
+          warnings.push("无法读取项目项身份 " + String(item && item.name || "未命名项目项") + ": " + (error.message || error));
+          continue;
+        }
         if (itemId && seenItemIds.has(itemId)) {
           warnings.push(
             "检测到重复的 Premiere 项目项 ID " + itemId +
@@ -92,11 +110,15 @@
           continue;
         }
 
-        var clip = await castClip(ppro, item);
-        if (!clip) continue;
         try {
-          if (await clip.isSequence()) continue;
-          var mediaPath = Core.toFileSystemPath(await clip.getMediaFilePath());
+          var clip = await castClip(ppro, item);
+          if (clip == null) continue;
+          var sequence = await clip.isSequence();
+          if (sequence === true) continue;
+          if (sequence !== false) throw new Error("无法确认项目项是否为序列");
+          var rawPath = await clip.getMediaFilePath();
+          if (typeof rawPath !== "string") throw new Error("素材路径未返回有效文本");
+          var mediaPath = Core.toFileSystemPath(rawPath);
           if (!mediaPath) continue;
           entries.push({
             item: item,

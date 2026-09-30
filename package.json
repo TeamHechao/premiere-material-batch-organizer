@@ -1,6 +1,6 @@
 {
   "name": "premiere-material-batch-organizer",
-  "version": "0.2.10",
+  "version": "0.4.1",
   "private": true,
   "description": "Premiere 素材批次自动整理插件",
   "type": "commonjs",
@@ -9,6 +9,7 @@
     "build": "node scripts/build.mjs",
     "test": "node --test tests/*.test.js",
     "check": "npm run test && npm run build && node scripts/verify-build.mjs",
+    "check:windows": "node scripts/check-windows.mjs",
     "preview": "node scripts/serve-preview.mjs",
     "package:macos": "npm run build && node scripts/package-macos.mjs",
     "install:user": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-user-plugin.ps1",

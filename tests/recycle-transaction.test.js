@@ -58,6 +58,22 @@ for (const kind of ["正常归集", "恢复归集"]) {
   }
 }
 
+test("保留原件时发现同大小不同内容，不能补链或保存，更不能回收", async () => fixture(async f => {
+  let saves = 0;
+  await assert.rejects(Transaction.moveAndRelink({ fs, sourcePath: f.source, targetPath: f.target,
+    projectItems: [f.item], deleteSource: false, forceMode: "rename", wait: async () => {},
+    persistProject: async () => { saves++; return true; },
+    recycle: async () => assert.fail("不得回收"),
+    verifyRetainedCopy: async paths => {
+      await fs.writeFile(paths.targetPath, "modified");
+      return require("../src/file-service").compareFiles({ fs, ...paths });
+    }
+  }), /内容|不一致/);
+  assert.equal(saves, 0);
+  assert.equal(await f.item.getMediaFilePath(), f.source);
+  assert.equal(await fs.readFile(f.source, "utf8"), "original");
+}));
+
 test("旧隔离文件与原位置同时存在时不选择任意一份回收", async () => fixture(async f => {
   await fs.copyFile(f.source, f.target); f.changeLink(f.target);
   const cleanup = Transaction.cleanupPathFor(f.source, "old"); await fs.copyFile(f.source, cleanup);

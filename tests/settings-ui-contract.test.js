@@ -38,8 +38,8 @@ test("主页提供明确的管理入口，并把名单数量作为单独信息�
 
 test("设置页明确当前共享范围、连接状态和每项操作", () => {
   assert.match(html, /当前工程文件夹/);
-  assert.match(html, /同一文件夹里的所有 Premiere 工程共用这份名单/);
-  assert.match(html, /确认一次新名单后，同目录工程共用设置/);
+  assert.match(html, /设一次，这台电脑一直用/);
+  assert.match(html, /本机所有工程沿用这份名单/);
   assert.match(source, /还没有添加文件夹/);
   assert.match(source, /statusLabel\.textContent = status\.valid \? "可正常使用" : "需要重新选择"/);
   assert.match(source, /mapAction\.textContent = status\.valid \? "更换文件夹" : "选择本机文件夹"/);
@@ -55,27 +55,25 @@ test("设置操作会在当前页反馈，缺少工程或忙碌时不会静默�
   assert.match(source, /素材正在整理，完成后才能修改名单/);
   assert.match(source, /projectState\.pendingTransaction \|\| projectState\.pendingProjectSave/);
   assert.match(source, /请先完成“检查文件和链接”，再修改不搬动文件夹/);
-  assert.match(source, /同一工程文件夹内的所有工程已暂停，请分别确认名单后再开启/);
-  assert.match(source, /setSettingsMessage\("error", panelError\)/);
+  assert.match(source, /已记住，其他工程也会沿用/);
+  assert.match(source, /setSettingsMessage\("error",/);
   assert.match(source, /var initialBlockReason = protectedSettingsBlockReason\(\)/);
   assert.match(source, /function openSettingsPage\(\)[\s\S]{0,260}requestScan\(\{ forceContext: true \}\)/);
   assert.match(html, /openSettingsPage\(\);[\s\S]{0,120}batch-collector:refresh/);
 });
 
-test("移除前后都明确磁盘文件不会删除，而且自动整理会暂停", () => {
-  assert.match(source, /从不搬动名单移除“[\s\S]{0,360}不会删除磁盘文件夹或里面的素材[\s\S]{0,120}所有工程都会暂停/);
-  assert.match(source, /pauseWorkspaceProjects\(\)/);
-  assert.match(source, /已从名单移除“[\s\S]{0,260}没有删除磁盘文件或素材；同一工程文件夹内的所有工程已暂停/);
+test("移除名单直接执行并暂停当前工程，不删除磁盘文件", () => {
+  const remove = source.slice(source.indexOf("async function removeProtectedLibrary"), source.indexOf("async function completeProtectionSetup"));
+  assert.doesNotMatch(remove, /confirmation.request/);
+  assert.match(remove, /Preferences.withoutMapping/);
+  assert.match(remove, /setMachineSetting\("auto", false\)/);
+  assert.match(remove, /没有删除磁盘文件或素材/);
 });
 
-test("名单确认会原子保存本机设置，并按失败阶段显示固定中文提示", () => {
-  assert.match(source, /setMachineSettings\(\{ protection: true, auto: false \}\)/);
-  assert.match(source, /failureStage = "project-state"/);
+test("名单确认保存独立本机配置，不再按每工程版本反复确认", () => {
+  assert.match(source, /saveProtectionProfile\(Object.assign\(\{\}, protectionProfile, \{ confirmed: true \}\)\)/);
   assert.match(source, /failureStage = "machine-settings"/);
-  assert.match(source, /无法保存当前工程文件夹里的整理记录/);
-  assert.match(source, /MATERIAL_BATCH_MACHINE_SETTINGS_SAVE_FAILED/);
-  assert.match(source, /reportRuntimeError\("确认不搬动名单失败/);
-  assert.doesNotMatch(source, /无法保存本机设置，请关闭面板后重试/);
+  assert.match(source, /换工程或重开面板都不需要重新设置/);
 });
 
 test("添加范围拒绝工程上级目录、素材目录和父子重叠目录", () => {
@@ -84,8 +82,8 @@ test("添加范围拒绝工程上级目录、素材目录和父子重叠目录",
   assert.match(source, /MATERIAL_BATCH_PROTECTED_FOLDER_OVERLAP/);
   assert.match(source, /已有路径：/);
   assert.match(source, /本次选择：/);
-  assert.match(source, /refreshContext\(\{ force: true \}\)[\s\S]{0,360}validateChosenProtectedFolder\(rootPath, existingLibraryId\)/);
-  assert.match(source, /var currentLibrary = projectState\.protectedLibraries\.find/);
+  assert.match(source, /refreshSettingsContext\(\)[\s\S]{0,360}validateChosenProtectedFolder\(rootPath, existingLibraryId\)/);
+  assert.match(source, /var currentLibrary = effectiveProtectedLibraries\(\)\.find/);
   assert.match(source, /if \(!currentLibrary\) throw new Error\("不搬动名单已经变化/);
 });
 
@@ -121,7 +119,7 @@ test("Premiere UXP 主界面只使用稳定的普通区块布局", () => {
 test("主页用文字说明当前工程、整理开关、交接文件夹和重新检查动作", () => {
   assert.match(html, /class="context-label">当前工程<\/span>/);
   assert.doesNotMatch(html, /class="status-dot"/);
-  assert.match(html, /class="toggle-label">自动整理<\/span>/);
+  assert.match(html, /class="toggle-label">自动查找<\/span>/);
   assert.doesNotMatch(styles, /\.toggle-label\s*\{[^}]*display:\s*none/s);
   assert.match(html, /id="batchHeading">当前素材文件夹<\/h2>/);
   assert.match(html, /<div class="destination-path"[^>]*>[\s\S]*?<span>磁盘位置<\/span>/);

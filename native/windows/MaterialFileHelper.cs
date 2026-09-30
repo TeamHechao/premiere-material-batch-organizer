@@ -175,6 +175,14 @@ public static class MaterialFileHelper
         if (info.Length > maxBytes) throw new InvalidDataException("素材回收记录过大，原文件保留");
         return Json.Deserialize<Dictionary<string, object>>(File.ReadAllText(path, Encoding.UTF8));
     }
+    static void AssertSourceMayRecycle(Dictionary<string, object> pending)
+    {
+        object deleteSource;
+        // 旧事务没有此字段；新事务必须明确允许回收，不能把 false 或损坏值当作默认移动。
+        if (pending.TryGetValue("deleteSource", out deleteSource)
+            && (!(deleteSource is bool) || !(bool)deleteSource))
+            throw new InvalidDataException("此素材已选择保留原件或保留设置无效，拒绝回收");
+    }
     static void VerifyRegistered(Dictionary<string, object> request, Dictionary<string, object> registered)
     {
         foreach (string field in new [] { "id", "path", "targetPath", "workspaceRoot", "statePath" })
@@ -367,13 +375,13 @@ public static class MaterialFileHelper
                 }
                 string path = Text(request, "path"); operationPath = path; targetPath = Text(request, "targetPath");
                 string workspace = Text(request, "workspaceRoot"); string statePath = Text(request, "statePath");
-                string issuedPath = statePath + ".recycle-" + id + ".issued";
                 if (!reconcile) AssertRegularFile(path);
                 AssertRegularFile(targetPath); AssertPlainPath(workspace); AssertPlainPath(statePath);
                 if (!Directory.Exists(workspace) || !Inside(workspace, targetPath) || !File.Exists(statePath))
                     throw new InvalidDataException("素材回收工程边界或事务凭据无效");
                 if (!Same(statePath, Path.Combine(workspace, ".premiere-material-space.json"))) throw new InvalidDataException("事务记录路径不匹配");
                 var pending = ObjectField(Read(statePath, 33554432), "pendingTransaction");
+                if (!reconcile) AssertSourceMayRecycle(pending);
                 var registered = ObjectField(pending, "recycleRequest");
                 VerifyRegistered(request, registered);
                 if (!Same(Text(registered, "id"), id) || !Same(Text(registered, "path"), path)
@@ -420,16 +428,22 @@ public static class MaterialFileHelper
                 WriteResult(prefix + ".ready.json", id, "ready", path, "", "", token);
                 while (!File.Exists(prefix + ".commit.json")) { Fresh(request); if (File.Exists(prefix + ".cancel")) throw new OperationCanceledException("核验已取消"); Thread.Sleep(100); }
                 var commit = Read(prefix + ".commit.json");
+                string issuedPath = Text(commit, "issuedPath");
+                string currentIssuedPath = Path.Combine(workspace, ".premiere-material-recycle", id + ".issued");
+                string legacyIssuedPath = statePath + ".recycle-" + id + ".issued";
                 if (!Same(Text(commit, "id"), id) || !Same(Text(commit, "token"), token)
-                    || !Same(Text(commit, "statePath"), statePath) || !Same(Text(commit, "issuedPath"), issuedPath)
+                    || !Same(Text(commit, "statePath"), statePath)
+                    || (!Same(issuedPath, currentIssuedPath) && !Same(issuedPath, legacyIssuedPath))
                     || Math.Abs(Now() - Number(commit, "at")) > 1500 || !File.Exists(issuedPath))
                     throw new InvalidDataException("素材回收最终事务凭据无效");
+                AssertRegularFile(issuedPath);
                 Fresh(request);
                 var issued = Read(issuedPath);
                 if (!Same(Text(issued, "id"), id) || !Same(Text(issued, "transactionId"), Text(pending, "id")))
                     throw new InvalidDataException("回收提交凭据与搬运事务不匹配");
                 var committedPending = ObjectField(Read(statePath, 33554432), "pendingTransaction");
                 if (!Same(Text(committedPending, "id"), Text(pending, "id"))) throw new InvalidDataException("提交时搬运事务已变化");
+                AssertSourceMayRecycle(committedPending);
                 VerifyRegistered(request, ObjectField(committedPending, "recycleRequest"));
                 if (!Same(Text(ObjectField(committedPending, "recycleRequest"), "id"), id)) throw new InvalidDataException("提交时事务已变化");
                 // 内容已在 ready 前完整核验，两个只读句柄持续阻止写入。

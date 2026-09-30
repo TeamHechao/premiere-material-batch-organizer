@@ -19,8 +19,7 @@
       <div class="brand-lockup">
         <div class="brand-copy">
           <h1>素材自动整理</h1>
-          <p id="pluginVersion">版本 0.2.10 · 测试版</p>
-          <p>只整理当前工程引用的外部素材</p>
+          <p id="pluginVersion">版本 0.4.1 · 候选版</p>
         </div>
       </div>
     </header>
@@ -40,9 +39,9 @@
           <strong id="stateTitle">先设置不搬动文件夹</strong>
           <span id="stateDescription">后期包、共享音效库等要保持原位的文件夹，请先加入名单。</span>
         </div>
-        <label class="toggle-row" id="autoCollectControl" for="autoCollectToggle" title="开启或暂停当前工程的自动整理">
-          <span class="toggle-label">自动整理</span>
-          <input id="autoCollectToggle" type="checkbox" checked aria-label="当前工程自动整理">
+        <label class="toggle-row" id="autoCollectControl" for="autoCollectToggle" title="开启或暂停当前工程的自动查找">
+          <span class="toggle-label">自动查找</span>
+          <input id="autoCollectToggle" type="checkbox" checked aria-label="当前工程自动查找">
           <span class="toggle" aria-hidden="true"><span></span></span>
         </label>
       </div>
@@ -79,6 +78,28 @@
     </section>
 
     <p class="background-status" id="backgroundStatus" role="status" aria-live="polite" hidden></p>
+
+    <section class="review-section" id="collectionSection" aria-labelledby="collectionHeading" hidden>
+      <div class="review-heading"><h2 id="collectionHeading">整理清单</h2></div>
+      <p class="review-intro collection-intro">默认移动；勾选后在原路径保留一份。</p>
+      <div class="collection-destination">
+        <span class="review-path-label">目标文件夹</span>
+        <code class="review-path" id="collectionDestination"></code>
+      </div>
+      <div class="collection-toolbar">
+        <label class="collection-choice collection-select-all" for="keepAllSourcesToggle">
+          <input id="keepAllSourcesToggle" type="checkbox">
+          <span>全选：保留原件</span>
+        </label>
+        <span class="collection-toolbar-note">原件留在原路径</span>
+      </div>
+      <div class="review-list" id="collectionList" role="list"></div>
+      <div class="collection-footer">
+        <p id="collectionSummary" role="status">0 个待整理 · 0 个保留原件</p>
+        <button class="button button-primary" id="startCollectionButton" type="button">开始整理</button>
+        <p class="review-note">未勾选：完成后回收原位置；勾选：保留原件。</p>
+      </div>
+    </section>
 
     <section class="review-section" id="reviewSection" aria-labelledby="reviewHeading" hidden>
       <div class="review-heading">
@@ -143,7 +164,7 @@
       </div>
 
       <h2 class="settings-page-title" id="settingsHeading">管理不搬动文件夹</h2>
-      <p class="settings-intro"><strong>名单里的素材不会移动</strong><span>只有名单外、工程文件夹外的普通素材才会搬到当前素材文件夹。添加、更换或移除后，同一工程文件夹内的所有 Premiere 工程都会暂停，磁盘文件不会被删除。</span></p>
+      <p class="settings-intro"><strong>设一次，这台电脑一直用</strong><span>后期包、音效库等放进这份名单，换工程也不用重新添加。名单里的素材和工程文件夹内已有素材都保持原位。</span></p>
 
       <div class="settings-message" id="settingsMessage" role="status" aria-live="polite" aria-atomic="true" hidden></div>
 
@@ -195,14 +216,14 @@
           <span id="settingsWorkspaceLabel">当前工程文件夹</span>
           <strong id="settingsWorkspaceName">城市纪录片</strong>
           <code id="settingsWorkspacePath">D:\剪辑项目</code>
-          <p>同一文件夹里的所有 Premiere 工程共用这份名单。名单改变后暂停整理；确认一次新名单后，同目录工程共用设置。</p>
+          <p>本机所有工程沿用这份名单，同目录工程共用日期批次和搬运记录。交接到另一台电脑，只需重新选择那台电脑上的素材库位置。</p>
         </section>
       </section>
 
       <section class="settings-rules" aria-labelledby="settingsRulesHeading">
         <h3 id="settingsRulesHeading">整理规则</h3>
         <p>当前工程文件夹内的全部素材保持原位；只有工程文件夹外的普通素材会整理。</p>
-        <p>整理后，原位置不保留文件。确认 Premiere 链接可用并保存后，原文件放入系统回收站；回收失败则保留原位。</p>
+        <p>先自动查找、列出待转移清单，默认全部转移。勾选某项“保留原件”时建立独立副本；其余原件在 Premiere 链接可用并保存后放入系统回收站。回收失败则保留原位。</p>
       </section>
     </div>
   </section>
@@ -213,7 +234,7 @@
         setup: { title: '先设置不搬动文件夹', desc: '后期包、共享音效库等要保持原位的文件夹，请先加入名单。没有也可以直接继续。', status: '尚未设置', files: '0', size: '0 B', progress: 0, kind: 'onboarding', action: '设置不搬动文件夹', intent: 'settings', icon: 'shield', auto: false, onboarding: 'protection', project: '城市纪录片_EP03.prproj', meta: '工程路径已识别', path: 'D:\\剪辑项目\\城市纪录片_EP03.prproj', activity: [] },
         activate: { title: '当前工程尚未开启', desc: '工程内素材保持原位；工程外 2 个 · 5.00 GB 待整理。', status: '等待开启', files: '0', size: '0 B', progress: 0, kind: 'onboarding', action: '开始整理此工程', intent: 'auto', icon: 'check', auto: false, onboarding: 'auto', project: '城市纪录片_EP03.prproj', meta: '工程路径已识别', path: 'D:\\剪辑项目\\城市纪录片_EP03.prproj', activity: [['只完成了检查', '尚未移动、补链或保存工程']] },
         policy: { title: '此工程需要重新确认', desc: '工程内素材保持原位；工程外 1 个 · 5.40 GB 待整理。', status: '等待确认', files: '0', size: '0 B', progress: 0, kind: 'onboarding', action: '开始整理此工程', intent: 'policy', icon: 'check', auto: false, project: '城市纪录片_EP03.prproj', meta: '工程路径已识别', path: 'D:\\剪辑项目\\城市纪录片_EP03.prproj', activity: [['整理规则已经更新', '确认前不会移动、补链或保存工程'], ['不搬动名单已核对', '开始后才会整理工程外素材']] },
-        ready: { title: '此工程的自动整理已开启', desc: '工程文件夹内的素材保持原位；以后新增的工程外普通素材会进入当前素材文件夹。', status: '自动整理中', files: '12', size: '18.6 GB', progress: 0, kind: 'ready', action: '', intent: '', icon: 'check', auto: true, project: '城市纪录片_EP03.prproj', meta: '工程路径已识别', path: 'D:\\剪辑项目\\城市纪录片_EP03.prproj', activity: [['已连接当前工程', '刚刚 · 此工程已开启'], ['等待工程外素材', '工程文件夹内的素材保持原位']] },
+        ready: { title: '此工程的自动查找已开启', desc: '自动查找工程外素材，找到后先列清单；工程内素材保持原位。', status: '自动查找中', files: '12', size: '18.6 GB', progress: 0, kind: 'ready', action: '', intent: '', icon: 'check', auto: true, project: '城市纪录片_EP03.prproj', meta: '工程路径已识别', path: 'D:\\剪辑项目\\城市纪录片_EP03.prproj', activity: [['已连接当前工程', '刚刚 · 此工程已开启'], ['等待工程外素材', '工程文件夹内的素材保持原位']] },
         empty: { title: '请先打开 Premiere 工程', desc: '打开工程后，插件才能找到需要整理的素材。', status: '等待工程', files: '0', size: '0 B', progress: 0, kind: 'empty', action: '重新检查', intent: 'refresh', icon: 'folder', auto: false, project: '未打开工程', meta: '等待连接', path: '', activity: [['等待 Premiere 工程', '打开工程后再重新检查']] },
         unsaved: { title: '请先保存工程', desc: '保存后，插件才能在工程旁边建立素材文件夹。', status: '等待保存', files: '0', size: '0 B', progress: 0, kind: 'warning', action: '重新检查', intent: 'refresh', icon: 'alert', auto: false, project: '城市纪录片_EP03', meta: '尚未保存', path: '', activity: [['工程尚未保存', '保存后再重新检查']] },
         running: { title: '正在检查工程素材', desc: '正在识别工程里引用的外部文件。', status: '检查中', files: '12', size: '18.6 GB', progress: 46, kind: 'running', action: '', intent: '', icon: 'refresh', auto: true, project: '城市纪录片_EP03.prproj', meta: '工程路径已识别', path: 'D:\\剪辑项目\\城市纪录片_EP03.prproj', activity: [['正在检查工程素材', '已检查 12 个文件'], ['共享素材保持原位', '后期包等文件夹不会移动']] },
@@ -348,6 +369,43 @@
         background: '1 项等待继续整理：AB7A0D8CACE0299E3762506A74AA612B.gif',
       });
       const qs = (id) => document.getElementById(id);
+      stateData.selection = Object.assign({}, stateData.ready, {
+        title: '找到工程外 2 个素材', desc: '默认移动；需要保留原件的再勾选。',
+        status: '等待整理', kind: 'onboarding', action: '', intent: '',
+      });
+      const renderCollectionPreview = (visible) => {
+        qs('collectionSection').hidden = !visible;
+        if (!visible) return;
+        const list = qs('collectionList'); list.textContent = '';
+        const updateSummary = () => {
+          const checked = list.querySelectorAll('input:checked').length;
+          qs('collectionSummary').textContent = '2 个待整理 · ' + checked + ' 个保留原件';
+          qs('keepAllSourcesToggle').checked = checked === 2;
+          qs('keepAllSourcesToggle').indeterminate = checked > 0 && checked < 2;
+        };
+        qs('collectionDestination').textContent = 'D:\\剪辑项目\\素材\\2026年09月30日添加素材';
+        ['C:\\Users\\剪辑师\\Downloads\\城市街头镜头.mp4', 'E:\\其他项目\\素材\\给另一个剪辑工程也要使用的背景音乐.wav'].forEach(path => {
+          const row = document.createElement('div'); row.className = 'review-item collection-item'; row.setAttribute('role', 'listitem');
+          const title = document.createElement('strong'); title.className = 'review-filename'; title.textContent = path.slice(path.lastIndexOf('\\') + 1);
+          const size = document.createElement('span'); size.className = 'collection-size'; size.textContent = path.endsWith('.mp4') ? '2.40 GB' : '48 MB';
+          const head = document.createElement('div'); head.className = 'collection-item-head'; head.append(title, size);
+          const sourceLabel = document.createElement('span'); sourceLabel.className = 'review-path-label'; sourceLabel.textContent = '原位置';
+          const source = document.createElement('p'); source.className = 'review-path'; source.textContent = path;
+          const label = document.createElement('label'); label.className = 'collection-choice';
+          const input = document.createElement('input'); input.type = 'checkbox';
+          input.addEventListener('change', updateSummary);
+          const text = document.createElement('span'); text.textContent = '转移并保留原件';
+          label.append(input, text); row.append(head, sourceLabel, source, label); list.appendChild(row);
+        });
+        qs('collectionSummary').textContent = '2 个待整理 · 0 个保留原件';
+        qs('startCollectionButton').textContent = '开始整理 2 个素材';
+        updateSummary();
+        qs('keepAllSourcesToggle').onchange = () => {
+          if (!document.body.classList.contains('preview-mode')) return;
+          list.querySelectorAll('input').forEach(input => { input.checked = qs('keepAllSourcesToggle').checked; });
+          updateSummary();
+        };
+      };
       const settingsPreviewMarkup = {
         empty: '<div class="protected-empty" role="listitem"><strong>还没有添加文件夹</strong><span>后期包、共享音效库等长期素材可以加在这里。</span></div>',
         connected: '<div class="protected-item" role="listitem" data-connection-state="connected"><div class="protected-item-heading"><strong>后期包</strong><span class="protected-status">可正常使用</span></div><span class="protected-path-label">磁盘位置</span><div class="protected-path">I:\\【后期包 ver10.0】</div><div class="protected-actions"><button class="button button-secondary" type="button" data-library-id="preview-post-kit" data-action="map">更换文件夹</button><button class="button button-quiet" type="button" data-library-id="preview-post-kit" data-action="remove">从名单移除</button></div></div>',
@@ -441,11 +499,14 @@
       };
       const setState = (name) => {
         const data = stateData[name] || stateData.setup;
+        renderCollectionPreview(name === 'selection');
         const recovery = data.recovery || null;
         document.body.dataset.state = name;
         document.body.dataset.onboarding = data.onboarding || 'complete';
         document.body.dataset.recovery = recovery ? 'true' : 'false';
-        ['autoCollectControl', 'batchSection', 'actionSection', 'protectedCount', 'activityDetails', 'reviewSection'].forEach((id) => {
+        qs('finishProtectionButton').hidden = data.onboarding !== 'protection';
+        qs('finishProtectionButton').textContent = '使用这份名单，返回整理';
+        ['autoCollectControl', 'batchSection', 'activityDetails', 'reviewSection'].forEach((id) => {
           qs(id).hidden = Boolean(recovery);
         });
         qs('stateTitle').textContent = data.title;
@@ -459,6 +520,9 @@
         qs('projectName').textContent = data.project;
         qs('projectMeta').textContent = data.meta;
         qs('projectPath').textContent = data.path;
+        qs('batchPath').textContent = data.path.includes('\\')
+          ? data.path.slice(0, data.path.lastIndexOf('\\')) + '\\素材\\' + qs('batchName').textContent
+          : '打开并保存工程后显示';
         qs('projectName').title = data.path;
         const strip = qs('stateStrip');
         strip.dataset.kind = data.kind;
@@ -501,7 +565,7 @@
         if (recovery) qs('reviewSection').hidden = true;
         qs('autoCollectToggle').disabled = ['setup', 'activate', 'policy', 'empty', 'unsaved', 'running', 'moving', 'conflict', 'failure', 'savefailed'].includes(name);
         const locked = ['setup', 'activate', 'policy', 'empty', 'unsaved', 'running', 'waiting', 'moving', 'conflict', 'failure', 'savefailed'].includes(name);
-        qs('openBatchButton').disabled = ['setup', 'activate', 'empty', 'unsaved', 'running', 'moving'].includes(name);
+        qs('openBatchButton').disabled = ['empty', 'unsaved'].includes(name);
         qs('handoffButton').disabled = locked;
         qs('handoffHint').textContent = name === 'waiting'
           ? '文件写完并自动整理后才能交接。'
@@ -600,12 +664,16 @@
       });
       qs('stateAction').addEventListener('click', () => {
         const intent = qs('stateAction').dataset.previewIntent;
+        if (intent === 'collection') qs('collectionSection').scrollIntoView({ block: 'start' });
         if (document.body.classList.contains('preview-mode') && intent === 'settings') openSettingsPage();
         if (document.body.classList.contains('preview-mode') && (intent === 'auto' || intent === 'policy')) setState('ready');
         if (document.body.classList.contains('preview-mode') && intent === 'recover' && document.body.dataset.state === 'failure') setState('manual');
         if (document.body.classList.contains('preview-mode') && intent === 'activity') showActivity();
         if (intent === 'review') showReviews();
         window.dispatchEvent(new CustomEvent('batch-collector:state-action', { detail: { state: document.body.dataset.state } }));
+      });
+      qs('startCollectionButton').addEventListener('click', () => {
+        if (document.body.classList.contains('preview-mode')) setState('ready');
       });
       qs('reviewList').addEventListener('click', (event) => {
         let button = event.target;
@@ -641,6 +709,8 @@
   </script>
   <script src="src/core.js"></script>
   <script src="src/scan-policy.js"></script>
+  <script src="src/preferences.js"></script>
+  <script src="src/workspace-session.js"></script>
   <script src="src/state.js"></script>
   <script src="src/transaction.js"></script>
   <script src="src/recovery.js"></script>

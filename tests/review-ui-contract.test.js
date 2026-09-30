@@ -6,6 +6,7 @@ const path = require("node:path");
 const html = fs.readFileSync(path.join(__dirname, "..", "plugin", "index.html"), "utf8");
 const previewHtml = fs.readFileSync(path.join(__dirname, "..", "preview", "index.html"), "utf8");
 const styles = fs.readFileSync(path.join(__dirname, "..", "plugin", "styles.css"), "utf8");
+const source = fs.readFileSync(path.join(__dirname, "..", "src", "main.js"), "utf8");
 
 test("提供稳定的审核容器，操作属性中不嵌入本机路径", () => {
   assert.match(html, /id="reviewSection"/);
@@ -52,7 +53,7 @@ test("预览会展示被动等待写入状态", () => {
   assert.match(html, /文件仍在下载或写入，会保持在原位置；写完后自动重试/);
   assert.match(html, /kind: 'waiting', action: '', intent: '', icon: 'file', auto: true/);
   assert.match(html, /const locked = \['setup', 'activate', 'policy', 'empty', 'unsaved', 'running', 'waiting', 'moving', 'conflict', 'failure', 'savefailed'\]/);
-  assert.match(html, /openBatchButton'\)\.disabled = \['setup', 'activate', 'empty', 'unsaved', 'running', 'moving'\]/);
+  assert.match(html, /openBatchButton'\)\.disabled = \['empty', 'unsaved'\]/);
 });
 
 test("预览会展示因等待 Premiere 保存而阻断的恢复状态", () => {
@@ -95,17 +96,15 @@ test("移动失败和工程保存失败预览都给出具体恢复目标", () =>
   assert.match(html, /savefailed: \{[\s\S]*?recovery: \{[\s\S]*?filename: '主镜头\.mov'[\s\S]*?target: 'D:\\\\剪辑项目\\\\素材\\\\2026年09月04日添加素材\\\\主镜头\.mov'[\s\S]*?size: '4\.80 GB'/);
 });
 
-test("恢复页隐藏全部普通整理入口，只保留恢复操作", () => {
+test("恢复页暂停搬运，但保留查看名单和打开目录入口", () => {
   for (const id of ["batchSection", "actionSection", "protectedCount", "activityDetails", "reviewSection"]) {
     assert.match(html, new RegExp(`id=["']${id}["']`));
   }
-  assert.match(html, /\['autoCollectControl', 'batchSection', 'actionSection', 'protectedCount', 'activityDetails', 'reviewSection'\][\s\S]*?hidden = Boolean\(recovery\)/);
+  assert.match(html, /\['autoCollectControl', 'batchSection', 'activityDetails', 'reviewSection'\][\s\S]*?hidden = Boolean\(recovery\)/);
   assert.match(html, /if \(recovery\) qs\('reviewSection'\)\.hidden = true/);
   for (const selector of [
     "#autoCollectControl",
     ".batch-section",
-    ".action-section",
-    ".protection-summary",
     ".activity-section",
     ".review-section",
   ]) {
@@ -116,4 +115,12 @@ test("恢复页隐藏全部普通整理入口，只保留恢复操作", () => {
 test("恢复路径在 300 像素窄面板内可完整换行", () => {
   assert.match(styles, /\.recovery-path-block code\s*\{[^}]*max-width:\s*100%;[^}]*overflow-wrap:\s*anywhere;[^}]*word-break:\s*break-word;[^}]*white-space:\s*normal;/s);
   assert.match(styles, /\.recovery-details\[hidden\], \.recovery-location-actions\[hidden\], \.recovery-open\[hidden\], \.recovery-close\[hidden\]\s*\{[^}]*display:\s*none\s*!important;/s);
+});
+
+test("待整理页聚焦清单，并明确区分转移与保留原件", () => {
+  assert.match(html, /class="review-intro collection-intro">默认移动；勾选后在原路径保留一份。/);
+  assert.match(html, /全选：保留原件/);
+  assert.match(html, /未勾选：完成后回收原位置；勾选：保留原件。/);
+  assert.match(source, /text\.textContent = "转移并保留原件"/);
+  assert.match(styles, /body\[data-state="selection"\][\s\S]*?\.batch-section[\s\S]*?\.action-section[\s\S]*?\.activity-section[\s\S]*?display:\s*none\s*!important/);
 });

@@ -85,6 +85,35 @@ button:focus-visible, input:focus-visible { outline: none; box-shadow: var(--foc
 .toggle-row input:checked + .toggle span { transform: translateX(12px); background: var(--amber-300); }
 .toggle-row input:focus-visible + .toggle { box-shadow: var(--focus-ring); }
 .toggle-row input:disabled + .toggle { opacity: .45; cursor: not-allowed; }
+.collection-choice { display: flex; align-items: center; min-height: 36px; gap: 8px; color: var(--text-secondary); font-size: 11px; line-height: 1.4; cursor: pointer; }
+.collection-choice input { appearance: auto; -webkit-appearance: checkbox; flex: 0 0 16px; width: 16px; height: 16px; accent-color: var(--amber-500); }
+.collection-choice span { min-width: 0; overflow-wrap: anywhere; }
+#collectionSection { margin: 0 0 18px; padding: 12px; border: 1px solid var(--border-strong); border-radius: var(--radius-surface); background: var(--surface-raised); }
+#collectionSection .review-heading { padding: 0; }
+#collectionSection .review-intro { margin-top: 4px; line-height: 1.4; }
+.collection-destination { min-width: 0; margin-top: 11px; padding: 8px 9px; border: 1px solid var(--border-subtle); border-radius: var(--radius-control); background: var(--surface-panel); }
+.collection-destination .review-path-label { margin: 0 0 3px; }
+.collection-destination .review-path { color: var(--text-primary); font-size: 10px; line-height: 1.4; }
+.collection-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 9px; padding: 2px 0 3px; border-bottom: 1px solid var(--border-subtle); }
+.collection-select-all { flex: 1 1 auto; color: var(--text-primary); font-weight: 650; }
+.collection-toolbar-note { flex: 0 1 auto; color: var(--text-tertiary); font-size: 10px; line-height: 1.3; text-align: right; }
+#collectionSection .review-list { margin-top: 0; }
+#collectionSection .review-item { padding: 11px 0 10px; }
+.collection-item-head { display: flex; align-items: baseline; min-width: 0; gap: 8px; }
+.collection-item-head .review-filename { min-width: 0; flex: 1 1 auto; margin-bottom: 0; }
+.collection-size { flex: 0 0 auto; color: var(--amber-300); font-size: 10px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+#collectionSection .review-path-label { margin-top: 7px; }
+#collectionSection .collection-choice { min-height: 32px; margin-top: 4px; padding: 1px 0; }
+.collection-footer { padding-top: 10px; border-top: 1px solid var(--border-subtle); }
+.collection-footer .button { width: 100%; margin: 7px 0 0; white-space: normal; }
+#collectionSummary { font-size: 11px; color: var(--text-secondary); }
+#collectionSection .review-note { margin-top: 7px; font-size: 10px; line-height: 1.35; }
+body[data-state="selection"] .state-action,
+body[data-state="selection"] .batch-section,
+body[data-state="selection"] .action-section,
+body[data-state="selection"] .protection-summary,
+body[data-state="selection"] .activity-section { display: none !important; }
+body[data-state="selection"] #collectionSection { margin-bottom: 0; }
 .state-action { width: 100%; min-height: 32px; margin-top: 11px; padding: 6px 9px; border: 1px solid var(--border-strong); border-radius: var(--radius-control); background: rgba(255,255,255,.04); color: var(--text-primary); font-size: 12px; font-weight: 600; cursor: pointer; }
 .state-action:hover { border-color: rgba(255,255,255,.3); background: rgba(255,255,255,.07); }
 .state-strip[data-kind="onboarding"] .state-action { border-color: var(--amber-500); background: var(--amber-500); color: #17130b; }
@@ -131,7 +160,7 @@ button:focus-visible, input:focus-visible { outline: none; box-shadow: var(--foc
 .batch-status { flex: 0 0 auto; color: var(--amber-300); font-size: 11px; line-height: 1.2; white-space: nowrap; }
 .destination-path { display: block; min-height: 58px; padding: 10px 11px; border: 1px solid var(--border-strong); border-radius: var(--radius-control); background: var(--surface-raised); }
 .destination-path span { display: block; margin-bottom: 3px; color: var(--text-tertiary); font-size: 10px; line-height: 1.3; }
-.destination-path code { display: block; overflow: hidden; color: var(--text-primary); font: 600 12px/1.4 "Cascadia Mono", Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.destination-path code { display: block; overflow-wrap: anywhere; word-break: break-word; color: var(--text-primary); font: 600 12px/1.4 "Cascadia Mono", Consolas, monospace; white-space: normal; }
 .batch-legacy-note { margin-top: 7px; color: var(--text-tertiary); font-size: 10px; line-height: 1.45; }
 .batch-legacy-note[hidden] { display: none !important; }
 .background-status { margin-top: 7px; color: var(--text-secondary); font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; word-break: break-all; }
@@ -234,12 +263,9 @@ body[data-state="savefailed"] .action-section > .button-primary:hover:not(:disab
 .settings-rules p { margin: 0 0 7px; color: var(--text-tertiary); font-size: 10px; line-height: 1.5; }
 
 body[data-onboarding="protection"] .batch-section,
-body[data-onboarding="protection"] .action-section,
-body[data-onboarding="protection"] .protection-summary,
 body[data-onboarding="protection"] .activity-section,
 body[data-onboarding="protection"] .review-section,
 body[data-onboarding="auto"] .batch-section,
-body[data-onboarding="auto"] .action-section,
 body[data-onboarding="auto"] .activity-section,
 body[data-onboarding="auto"] .review-section,
 body[data-onboarding="protection"] #autoCollectControl,
@@ -247,17 +273,13 @@ body[data-onboarding="auto"] #autoCollectControl { display: none; }
 
 body[data-state="empty"] .batch-section,
 body[data-state="empty"] .action-section,
-body[data-state="empty"] .protection-summary,
 body[data-state="empty"] .activity-section,
 body[data-state="unsaved"] .batch-section,
 body[data-state="unsaved"] .action-section,
-body[data-state="unsaved"] .protection-summary,
 body[data-state="unsaved"] .activity-section { display: none; }
 
 body[data-recovery="true"] #autoCollectControl,
 body[data-recovery="true"] .batch-section,
-body[data-recovery="true"] .action-section,
-body[data-recovery="true"] .protection-summary,
 body[data-recovery="true"] .activity-section,
 body[data-recovery="true"] .review-section { display: none; }
 body[data-recovery="true"] .state-strip { margin-bottom: 10px; }

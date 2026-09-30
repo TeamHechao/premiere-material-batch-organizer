@@ -9,6 +9,7 @@
   var SCHEME = "hechao-material-recycle";
   var MAX_LIFETIME_MS = 6 * 60 * 60 * 1000;
   var COMMIT_WINDOW_MS = 1500;
+  var STALL_TIMEOUT_MS = 30000;
 
   function text(value) { return value == null ? "" : String(value); }
   function join(dir, name) {
@@ -17,21 +18,62 @@
   function issuedCredentialPath(request, jobId) {
     return join(join(request.workspaceRoot, ".premiere-material-recycle"), jobId + ".issued");
   }
+  function knownLink(stat) {
+    return (typeof stat.isSymbolicLink === "function" && stat.isSymbolicLink())
+      || stat.isSymbolicLink === true
+      || (Number.isInteger(stat.mode) && (stat.mode & 0xf000) === 0xa000);
+  }
+  async function assertPlainDirectory(fs, nativePath, preparing) {
+    var current = nativePath.replace(/[\\]+$/, "");
+    while (current) {
+      var stat = await fs.lstat(/^[A-Za-z]:$/.test(current) ? current + "\\" : current);
+      if (typeof stat.isDirectory !== "function" || !stat.isDirectory()
+        || knownLink(stat) || (!preparing && typeof stat.isSymbolicLink !== "function")) {
+        throw protocolError("MATERIAL_RECYCLE_PROTOCOL", "回收凭据目录不是普通文件夹，原文件保留");
+      }
+      current = current.slice(0, Math.max(0, current.lastIndexOf("\\")));
+    }
+  }
   async function ensureDirectory(fs, nativePath) {
-    if (!fs || typeof fs.mkdir !== "function") return;
-    try { await fs.mkdir(nativePath, { recursive: true }); }
+    // UXP Stats does not always expose isSymbolicLink. This only prepares the
+    // credential directory; the native commit still rejects every reparse
+    // point before touching media. Cleanup below continues to require proof.
+    await assertPlainDirectory(fs, nativePath.slice(0, nativePath.lastIndexOf("\\")), true);
+    if (typeof fs.mkdir !== "function") throw new Error("文件接口无法创建回收凭据目录，原文件保留");
+    try { await fs.mkdir(nativePath, { recursive: false }); }
     catch (error) {
       if (!(await exists(fs, nativePath))) throw error;
     }
+    await assertPlainDirectory(fs, nativePath, true);
+  }
+  async function smallPlainJson(fs, path, limit) {
+    var before = await fs.lstat(path);
+    if (typeof before.isFile !== "function" || !before.isFile()
+      || typeof before.isSymbolicLink !== "function" || knownLink(before)
+      || !Number.isFinite(Number(before.size)) || Number(before.size) > limit) throw new Error("凭据不是有效普通文件");
+    return readJson(fs, path);
   }
   async function removeCompletedCredential(fs, request, jobId) {
     if (!fs || typeof fs.unlink !== "function") return;
+    // 只处理已认证成功回执对应的当前事务，不按“非 pending”推断旧凭据可删除。
+    var pending;
+    try {
+      await assertPlainDirectory(fs, request.workspaceRoot);
+      pending = (await smallPlainJson(fs, request.statePath, 33554432)).pendingTransaction;
+      if (!pending || !pending.id || !pending.recycleRequest || pending.recycleRequest.id !== jobId
+        || !Core.samePath(pending.recycleRequest.path, request.path)
+        || !Core.samePath(pending.recycleRequest.targetPath, request.targetPath)) return;
+    } catch (_) { return; }
     var paths = [
       issuedCredentialPath(request, jobId),
       request.statePath + ".recycle-" + jobId + ".issued",
     ];
     for (var index = 0; index < paths.length; index += 1) {
-      try { if (await exists(fs, paths[index])) await fs.unlink(paths[index]); } catch (_) {}
+      try {
+        await assertPlainDirectory(fs, paths[index].slice(0, paths[index].lastIndexOf("\\")));
+        var issued = await smallPlainJson(fs, paths[index], 8192);
+        if (issued.id === jobId && issued.transactionId === pending.id) await fs.unlink(paths[index]);
+      } catch (_) {}
     }
   }
   function plainPath(value) {
@@ -68,6 +110,8 @@
       if (!plainPath(result[field])) throw new Error("素材回收路径无效：" + field);
     });
     if (result.path.toLowerCase() === result.targetPath.toLowerCase()) throw new Error("回收源和目标不能相同");
+    if (!Core.samePath(result.statePath, join(result.workspaceRoot, ".premiere-material-space.json"))
+      || !Core.isPathInside(result.targetPath, result.workspaceRoot)) throw new Error("素材回收请求超出工程边界");
     result.sourceFingerprint = fingerprint(result.sourceFingerprint);
     result.targetFingerprint = fingerprint(result.targetFingerprint);
     return result;
@@ -155,6 +199,16 @@
       throw protocolError("MATERIAL_RECYCLE_LAUNCH_FAILED", "本地文件助手未运行或正在忙，原文件保留；请运行插件安装器修复助手");
     }
     async function poll(job, bridgeInfo) {
+      try { return await pollUntilResult(job, bridgeInfo); }
+      catch (error) {
+        if (job.committed && error.committed === undefined) {
+          if (error.code === "MATERIAL_RECYCLE_PROTOCOL") { error.committed = true; throw error; }
+          throw protocolError("MATERIAL_RECYCLE_UNCERTAIN", "回收提交或回执读取未确认，已结束等待；未重复回收", { committed: true, id: job.id });
+        }
+        throw error;
+      }
+    }
+    async function pollUntilResult(job, bridgeInfo) {
       var deadline = job.expiresAt;
       var readyPath = job.prefix + ".ready.json";
       var resultPath = job.prefix + ".result.json";
@@ -162,6 +216,7 @@
       var ready = null;
       var lastActivity = now();
       var lastProgress = "";
+      var lastNotification = "";
       while (now() <= deadline) {
         if (!job.committed && options.cancelled && options.cancelled()) {
           if (!(await exists(fs, job.prefix + ".cancel"))) await writeNew(fs, job.prefix + ".cancel", { id: job.id });
@@ -184,6 +239,9 @@
           if (result.status === "recycled") await removeCompletedCredential(fs, job.request, job.id);
           return result;
         }
+        if (job.committed && options.cancelled && options.cancelled()) {
+          throw protocolError("MATERIAL_RECYCLE_UNCERTAIN", "已结束等待，回收结果待核对；未取消或重复提交回收", { committed: true, id: job.id });
+        }
         if (!job.committed && !ready && await exists(fs, readyPath)) {
           ready = await readJson(fs, readyPath);
           if (text(ready.id) !== job.id || text(ready.token) !== bridgeInfo.token || ready.status !== "ready") {
@@ -193,31 +251,37 @@
             throw protocolError("MATERIAL_RECYCLE_CANCELLED", "回收前工程状态已变化");
           }
           var issuedPath = issuedCredentialPath(job.request, job.id);
+          await ensureDirectory(fs, join(job.request.workspaceRoot, ".premiere-material-recycle"));
           var credential = typeof options.beforeCommit === "function"
             ? await options.beforeCommit({ jobId: job.id, request: job.request, ready: ready, receiptId: "", issuedPath: issuedPath }) : null;
           if (credential === false) throw protocolError("MATERIAL_RECYCLE_CANCELLED", "回收最终确认未通过");
-          var at = now();
+          if (options.cancelled && options.cancelled()) throw protocolError("MATERIAL_RECYCLE_CANCELLED", "提交前操作已取消，原文件保留");
           if (typeof options.validate === "function" && await options.validate() === false) throw protocolError("MATERIAL_RECYCLE_CANCELLED", "提交前工程状态已变化");
+          var at = now();
           if (at > deadline - COMMIT_WINDOW_MS) {
             throw protocolError("MATERIAL_RECYCLE_EXPIRED", "素材回收最终确认已过期");
           }
-          await ensureDirectory(fs, join(job.request.workspaceRoot, ".premiere-material-recycle"));
           job.committed = true;
           await writeNew(fs, commitPath, { id: job.id, token: bridgeInfo.token, at: at, statePath: job.request.statePath, issuedPath: issuedPath, credential: credential || null });
-          if (typeof options.onProgress === "function") options.onProgress("committed", { id: job.id, path: job.request.path });
+          lastActivity = now();
         }
-        if (typeof options.onProgress === "function") {
-          var progress = { id: job.id, path: job.request.path };
-          try { if (await exists(fs, job.prefix + ".progress.json")) progress = await readJson(fs, job.prefix + ".progress.json"); } catch (_) {}
-          options.onProgress(job.committed ? "committed" : ready ? "ready" : "waiting", progress);
+        var progress = { id: job.id, path: job.request.path }, activity = "";
+        try {
+          if (await exists(fs, job.prefix + ".progress.json")) {
+            progress = await readJson(fs, job.prefix + ".progress.json");
+            activity = JSON.stringify(progress);
+          }
+        } catch (_) {}
+        if (activity && activity !== lastProgress) { lastProgress = activity; lastActivity = now(); }
+        var stage = job.committed ? "committed" : ready ? "ready" : "waiting";
+        var notification = stage + ":" + JSON.stringify(progress);
+        if (typeof options.onProgress === "function" && notification !== lastNotification) {
+          lastNotification = notification;
+          options.onProgress(stage, progress);
         }
-        if (!job.committed && !ready) {
-          var activity = "";
-          try {
-            if (await exists(fs, job.prefix + ".progress.json")) activity = JSON.stringify(await readJson(fs, job.prefix + ".progress.json"));
-          } catch (_) {}
-          if (activity && activity !== lastProgress) { lastProgress = activity; lastActivity = now(); }
-          if (now() - lastActivity > 30000) throw protocolError("MATERIAL_RECYCLE_NOT_COMMITTED", "回收助手 30 秒内未响应或核验停滞，原文件保留，可稍后重试", { committed: false, id: job.id });
+        if (now() - lastActivity > STALL_TIMEOUT_MS) {
+          if (job.committed) throw protocolError("MATERIAL_RECYCLE_UNCERTAIN", "回收助手 30 秒没有新进度，已结束等待；结果待核对，未重复回收", { committed: true, id: job.id });
+          throw protocolError("MATERIAL_RECYCLE_NOT_COMMITTED", "回收助手 30 秒内未响应或核验停滞，原文件保留，可稍后重试", { committed: false, id: job.id });
         }
         await wait(100);
       }
@@ -320,7 +384,8 @@
           if ((suffix === ".result.json" || suffix === ".reconciled.json") && text(value.path) !== request.path)
             throw protocolError("MATERIAL_RECYCLE_PROTOCOL", "回收结果路径不匹配");
           if (suffix === ".commit.json" || ((suffix === ".result.json" || suffix === ".reconciled.json") && value.status === "uncertain")) {
-            await launch(SCHEME + "://query/" + request.id);
+            try { await launch(SCHEME + "://query/" + request.id); }
+            catch (_) { throw protocolError("MATERIAL_RECYCLE_UNCERTAIN", "回收结果核对助手未响应，已结束等待；未重复回收", { committed: true, id: request.id }); }
             var queryDeadline = now() + MAX_LIFETIME_MS;
             var activityAt = now(), lastQueryProgress = "";
             while (now() < queryDeadline) {
@@ -330,13 +395,14 @@
                   throw protocolError("MATERIAL_RECYCLE_PROTOCOL", "恢复回执身份不匹配");
                 if (suffix !== ".reconciled.json" || JSON.stringify(checked) !== JSON.stringify(value)) return { state: "result", value: checked };
               }
+              if (options.cancelled && options.cancelled()) break;
               var queryProgress = "";
               try { if (await exists(fs, prefix + ".progress.json")) queryProgress = String(await fs.readFile(prefix + ".progress.json", { encoding: "utf-8" })); } catch (_) {}
               if (queryProgress && queryProgress !== lastQueryProgress) {
                 activityAt = now(); lastQueryProgress = queryProgress;
                 if (options.onProgress) { try { options.onProgress("committed", JSON.parse(queryProgress)); } catch (_) {} }
               }
-              if (now() - activityAt > 30000) break;
+              if (now() - activityAt > STALL_TIMEOUT_MS) break;
               await wait(100);
             }
             throw protocolError("MATERIAL_RECYCLE_UNCERTAIN", "回收结果核对尚未完成，未重复回收", { committed: true });

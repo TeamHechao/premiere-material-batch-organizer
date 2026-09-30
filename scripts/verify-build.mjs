@@ -9,6 +9,8 @@ const distDirectory = path.join(projectRoot, "dist");
 const sourceFiles = [
   "core.js",
   "scan-policy.js",
+  "preferences.js",
+  "workspace-session.js",
   "state.js",
   "transaction.js",
   "recovery.js",
@@ -78,13 +80,12 @@ for (const id of new Set([...mainSource.matchAll(/element\("([^"]+)"\)/g)].map((
 
 assert.doesNotMatch(mainSource, /require\(["']path["']\)/, "UXP 不得加载 Node 的 path 模块");
 assert.match(mainSource, /fs\.lstat\s*\(/, "稳定性检查必须使用 fs.lstat");
-assert.match(mainSource, /deleteSource:\s*true/, "整理操作必须请求删除源文件");
-assert.doesNotMatch(mainSource, /deleteSourceByMediaSpace|currentDeleteSourceSetting/, "不得把保留源文件设为可配置项");
-assert.match(html, /整理后，原位置不保留文件/, "设置中必须显示固定移动策略");
-assert.doesNotMatch(html, /id=["']deleteSourceToggle["']/, "固定移动策略不得提供关闭开关");
+assert.match(mainSource, /deleteSource:\s*deleteSource/, "每项选择必须进入持久事务");
+assert.match(html, /id="startCollectionButton"/, "必须先展示待转移清单");
+assert.match(mainSource, /keepSource: false, approved: false/, "默认移动，执行前等待清单选择");
 assert.match(transactionSource, /fs\.copyFile\s*\(/);
 assert.match(transactionSource, /fs\.unlink\s*\(/);
-assert.match(transactionSource, /MATERIAL_BATCH_RETAIN_SOURCE_BLOCKED/, "文件事务层必须拒绝保留源文件");
+assert.match(transactionSource, /options.deleteSource === false \? "copy"/, "保留原件必须使用独立副本");
 assert.match(transactionSource, /pending-delete/, "跨盘清理必须使用当前事务专属的隔离路径");
 assert.match(mainSource, /cleanupPath:\s*cleanupPath/, "必须持久化清理路径以支持恢复");
 assert.match(await readFile(path.join(distDirectory, "src", "premiere-adapter.js"), "utf8"), /getRootItem\s*\(/);
