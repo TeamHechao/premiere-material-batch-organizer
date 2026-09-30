@@ -248,8 +248,8 @@
     if (targetExists && !missingItemIds.length && targetLinkCount === expectedItemIds.length && sourceLinkCount === 0) {
       return Object.assign({
         kind: "completed",
-        cleanupPending: cleanupExists || (sourceExists && !sourceChanged),
-        sourceRetained: false,
+        cleanupPending: pending.deleteSource !== false && (cleanupExists || (sourceExists && !sourceChanged)),
+        sourceRetained: pending.deleteSource === false,
       }, details);
     }
 

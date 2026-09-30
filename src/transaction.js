@@ -665,7 +665,7 @@
       changedItems: [],
       possiblyChangedItems: [],
       warnings: [],
-      mode: options.forceMode || "copy",
+      mode: options.deleteSource === false ? "copy" : options.forceMode || "copy",
       stagingPath: stagingPath,
       cleanupPath: cleanupPath,
       stagingCreated: false,
@@ -683,11 +683,8 @@
       projectFileError.code = "MATERIAL_BATCH_PROJECT_FILE_BLOCKED";
       throw projectFileError;
     }
-    if (options.deleteSource === false) {
-      var retainError = new Error("素材整理只支持移动，不能保留原位置文件");
-      retainError.code = "MATERIAL_BATCH_RETAIN_SOURCE_BLOCKED";
-      throw retainError;
-    }
+    var retainSource = options.deleteSource === false;
+    if (retainSource && typeof options.verifyRetainedCopy !== "function") throw new Error("缺少保留原件副本的完整内容核验，未处理素材");
     if (!projectItems.length) throw new Error("没有可重链接的 Premiere 素材项");
     if (
       !Core.isAbsoluteLocalPath(cleanupPath)
@@ -705,7 +702,7 @@
       if (await exists(fs, cleanupPath)) throw new Error("发现未完成的源文件清理，请先检查");
 
       var originalStat = await lstatForIdentity(fs, sourcePath);
-      if (!options.forceMode) {
+      if (!options.forceMode && !retainSource) {
         var resolvedMode = await resolveMoveMode(fs, sourcePath, Core.dirname(targetPath));
         context.mode = resolvedMode.mode;
         context.modeEvidence = resolvedMode;
@@ -751,6 +748,13 @@
       }
 
       await assertContext(options.validate);
+      if (retainSource) {
+        var verifiedCopy = await options.verifyRetainedCopy({ sourcePath: sourcePath, targetPath: targetPath });
+        if (!verifiedCopy || !sameStrongPathFingerprint(context.sourceFingerprint, verifiedCopy.sourceFingerprint)
+          || !sameStrongPathFingerprint(context.targetFingerprint, verifiedCopy.targetFingerprint)) {
+          throw new Error("副本核验期间文件身份发生变化，两处文件保留");
+        }
+      }
       if (typeof options.beforeRelink === "function") {
         await options.beforeRelink({
           targetFingerprint: context.targetFingerprint,
@@ -808,8 +812,9 @@
       var sourceChanged = false;
       var remainingSourcePath = "";
       var cleanupVerificationPending = false;
-      {
-        var recycled = await recycleVerifiedSource(Object.assign({}, options, {
+      var recycled = {};
+      if (!retainSource) {
+        recycled = await recycleVerifiedSource(Object.assign({}, options, {
           sourceFingerprint: cleanupFingerprint,
           targetFingerprint: context.targetFingerprint,
           targetMethod: context.targetMethod,
@@ -835,7 +840,8 @@
         targetMethod: context.targetMethod,
         mode: context.mode,
         modeEvidence: context.modeEvidence || null,
-        sourceRetained: false,
+        deleteSource: !retainSource,
+        sourceRetained: retainSource,
         sourceChanged: sourceChanged,
         cleanupPending: cleanupPending,
         cleanupWarning: cleanupWarning,
@@ -895,6 +901,16 @@
   }
 
   async function cleanupVerifiedSource(options) {
+    if (options.deleteSource === false) {
+      // 保留原件事务也要核实新链接，但绝不进入任何回收请求或删除钩子。
+      await assertTargetAndLinks(options);
+      if (options.targetMethod !== "copy") throw new Error("保留原件要求独立副本，不能使用硬链接");
+      var retained = fingerprintFromStat(await lstatForIdentity(options.fs, options.sourcePath));
+      if (!sameStrongPathFingerprint(options.sourceFingerprint, retained)) throw new Error("保留的原文件已变化，记录待核对；不会回收");
+      if (retained.dev === options.targetFingerprint.dev && retained.ino === options.targetFingerprint.ino) throw new Error("两处位置不是独立副本，未完成整理");
+      return { cleanupPending: false, sourceRetained: true, deleteSource: false,
+        targetFingerprint: options.targetFingerprint, targetMethod: "copy", remainingSourcePath: options.sourcePath };
+    }
     return recycleVerifiedSource(options);
   }
   async function recycleVerifiedSource(options) {

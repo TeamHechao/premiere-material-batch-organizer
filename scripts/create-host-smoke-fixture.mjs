@@ -1,0 +1,20 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../work/host-smoke');
+await fs.mkdir(root, {recursive: true});
+const folder = await fs.mkdtemp(path.join(root, 'v030-'));
+const project = path.join(folder, '测试工程');
+const source = path.join(folder, '模拟下载');
+await fs.mkdir(project);
+await fs.mkdir(source);
+const samples = 24000, bytes = Buffer.alloc(44 + samples * 2);
+bytes.write('RIFF', 0); bytes.writeUInt32LE(bytes.length - 8, 4); bytes.write('WAVEfmt ', 8);
+bytes.writeUInt32LE(16, 16); bytes.writeUInt16LE(1, 20); bytes.writeUInt16LE(1, 22);
+bytes.writeUInt32LE(24000, 24); bytes.writeUInt32LE(48000, 28); bytes.writeUInt16LE(2, 32);
+bytes.writeUInt16LE(16, 34); bytes.write('data', 36); bytes.writeUInt32LE(samples * 2, 40);
+for (let n = 0; n < samples; n++) bytes.writeInt16LE(Math.round(Math.sin(n / 24000 * Math.PI * 880) * 1500), 44 + n * 2);
+await fs.writeFile(path.join(source, '独立测试声音.wav'), bytes, {flag: 'wx'});
+await fs.writeFile(path.join(project, '原有声音.wav'), bytes, {flag: 'wx'});
+console.log(JSON.stringify({folder, project, source}, null, 2));

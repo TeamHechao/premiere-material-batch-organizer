@@ -92,28 +92,34 @@ test("复制模式会依次校验、重链接全部工程项目、保存并删�
   });
 });
 
-test("整理操作必须移动文件，因此拒绝保留源文件", async () => {
+test("勾选保留原件时建立独立副本、补链保存，绝不回收或使用硬链接", async () => {
   await withTempFolder(async (folder) => {
     const source = path.join(folder, "source.wav");
     const target = path.join(folder, "batch", "source.wav");
     await fs.mkdir(path.dirname(target), { recursive: true });
     await fs.writeFile(source, "voice");
     const item = fakeProjectItem(source);
-    await assert.rejects(Transaction.moveAndRelink({
-      recycle: await fakeRecycle(folder),
+    const result = await Transaction.moveAndRelink({
+      recycle: async () => assert.fail("保留模式不能回收"),
       fs,
       sourcePath: source,
       targetPath: target,
       projectItems: [item],
-      forceMode: "copy",
+      forceMode: "rename",
       deleteSource: false,
+      verifyRetainedCopy: paths => require("../src/file-service").compareFiles({ fs, ...paths }),
       validate: async () => true,
       persistProject: async () => true,
       wait: async () => {},
-    }), (error) => error.code === "MATERIAL_BATCH_RETAIN_SOURCE_BLOCKED");
+    });
     assert.equal(await Transaction.exists(fs, source), true);
-    assert.equal(await Transaction.exists(fs, target), false);
-    assert.equal(item.currentPath(), source);
+    assert.equal(await fs.readFile(target, "utf8"), "voice");
+    assert.equal(item.currentPath(), target);
+    assert.equal(result.sourceRetained, true);
+    assert.equal(result.deleteSource, false);
+    assert.equal(result.targetMethod, "copy");
+    await fs.writeFile(source, "changed");
+    assert.equal(await fs.readFile(target, "utf8"), "voice", "两份必须独立");
   });
 });
 

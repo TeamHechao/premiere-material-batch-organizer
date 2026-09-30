@@ -286,6 +286,16 @@ test("旧路径被替换时会记录 sourceChanged，且不会声称源文件仍
   assert.equal(state.transactions[0].sourceRetained, false);
 });
 
+test("保留原件标记持久化，禁止中途改为回收，非法标记拒绝读取", () => {
+  let state = State.createState("E:\\项目", now);
+  state = State.beginTransaction(state, { id: "retain", sourcePath: "C:\\Downloads\\a.wav", targetRelativePath: "素材\\a.wav", deleteSource: false }, now);
+  assert.equal(State.COLLECTION_POLICY_VERSION, 4, "旧版必须拒绝解释新保留规则");
+  assert.equal(State.hydrateState(JSON.parse(JSON.stringify(state)), "E:\\项目", now).pendingTransaction.deleteSource, false);
+  assert.throws(() => State.updatePendingTransaction(state, { deleteSource: true }, now), /不能改变保留原件/);
+  state.pendingTransaction.deleteSource = "false";
+  assert.equal(State.isCompatibleState(state), false);
+});
+
 test("cleanup-pending 状态不会提交事务或递增交接文件夹", () => {
   let state = State.createState("I:\\项目", now);
   state = State.beginTransaction(state, {

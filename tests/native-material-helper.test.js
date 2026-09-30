@@ -76,22 +76,75 @@ async function interruptedJob(run) {
     const job = { child, done }; children.push(job); return job;
   };
   const waitFile = async suffix => {
-    for (let i = 0; i < 300; i++) {
+    // Native checkpoints flush to physical disk before publication. The old
+    // six-second fixture budget could kill a healthy writer mid-flush on HDD.
+    const deadline = Date.now() + 30000;
+    while (Date.now() < deadline) {
       try { return JSON.parse(await fs.readFile(prefix + suffix, "utf8")); }
       catch (error) { if (error.code !== "ENOENT" && !(error instanceof SyntaxError)) throw error; }
       await new Promise(resolve => setTimeout(resolve, 20));
     }
     throw new Error("测试助手未产生预期文件：" + suffix);
   };
-  const commit = async () => {
+  const commit = async (options = {}) => {
     await waitFile(".ready.json");
-    const issuedPath = statePath + ".recycle-" + id + ".issued";
-    await fs.writeFile(issuedPath, JSON.stringify({ id, transactionId: id }));
+    const issuedPath = options.issuedPath || statePath + ".recycle-" + id + ".issued";
+    if (options.directory) await fs.mkdir(issuedPath);
+    else await fs.writeFile(issuedPath, JSON.stringify({ id, transactionId: id }));
     await fs.writeFile(prefix + ".commit.json", JSON.stringify({ id, token, at: Date.now(), statePath, issuedPath }));
   };
-  try { await run({ folder, id, prefix, sourcePath, targetPath, request, launch, waitFile, commit }); }
+  try { await run({ folder, workspaceRoot, statePath, id, prefix, sourcePath, targetPath, request, launch, waitFile, commit }); }
   finally { for (const job of children) { if (job.child.exitCode === null && job.child.signalCode === null) job.child.kill(); await job.done; } }
 }
+
+test("Windows 原生助手在准备及提交时均拒绝回收保留原件或损坏的保留设置", { skip: !enabled }, async () => {
+  for (const phase of ["before-ready", "before-commit"]) {
+    for (const deleteSource of [false, "true"]) {
+      await interruptedJob(async f => {
+        let job;
+        if (phase === "before-commit") {
+          job = f.launch("job");
+          await f.waitFile(".ready.json");
+        }
+        const state = JSON.parse(await fs.readFile(f.statePath, "utf8"));
+        state.pendingTransaction.deleteSource = deleteSource;
+        await fs.writeFile(f.statePath, JSON.stringify(state));
+        if (phase === "before-ready") job = f.launch("job");
+        else await f.commit();
+        assert.equal(await job.done, 1, phase);
+        const result = await f.waitFile(".result.json");
+        assert.equal(result.status, "failed", phase);
+        assert.match(result.message, /保留原件或保留设置无效/);
+        await assert.rejects(fs.stat(f.prefix + ".staged.json"), { code: "ENOENT" });
+        assert.equal(await fs.readFile(f.sourcePath, "utf8"), "independent-native-fixture");
+        assert.equal(await fs.readFile(f.targetPath, "utf8"), "independent-native-fixture");
+      });
+    }
+  }
+});
+
+test("Windows 回收拒绝任意凭据位置、凭据目录及重解析目录", { skip: !enabled }, async () => {
+  for (const kind of ["outside", "wrong-name", "directory", "junction"]) {
+    await interruptedJob(async f => {
+      const directory = path.join(f.workspaceRoot, ".premiere-material-recycle");
+      let issuedPath = path.join(directory, f.id + ".issued");
+      if (kind === "junction") {
+        const external = path.join(f.folder, "protected-credentials");
+        await fs.mkdir(external);
+        await fs.symlink(external, directory, "junction");
+      } else await fs.mkdir(directory);
+      if (kind === "outside") issuedPath = path.join(f.folder, f.id + ".issued");
+      if (kind === "wrong-name") issuedPath = path.join(directory, "wrong.issued");
+      const job = f.launch("job");
+      await f.commit({ issuedPath, directory: kind === "directory" });
+      assert.equal(await job.done, 1, kind);
+      assert.equal((await f.waitFile(".result.json")).status, "failed", kind);
+      await assert.rejects(fs.stat(f.prefix + ".staged.json"), { code: "ENOENT" });
+      assert.equal(await fs.readFile(f.sourcePath, "utf8"), "independent-native-fixture");
+      assert.equal(await fs.readFile(f.targetPath, "utf8"), "independent-native-fixture");
+    });
+  }
+});
 
 async function holdNativeReadLock(file) {
   const quoted = file.replace(/'/g, "''");

@@ -50,10 +50,12 @@ if (process.argv.includes("--exercise")) {
   assert.equal((await api.recycle(request)).receiptId, receipt.receiptId);
   await assert.rejects(fs.stat(sourcePath), { code: "ENOENT" });
   assert.equal(await fs.readFile(targetPath, "utf8"), content);
-  await api.revealDirectory(workspaceRoot);
+  const reveal = !process.argv.includes("--quiet");
+  if (reveal) await api.revealDirectory(workspaceRoot);
+  assert.deepEqual(await fs.readdir(path.join(workspaceRoot, ".premiere-material-recycle")), []);
   const evidence = { version: manifest.version, installedTransport: "local-file-service", exactIdentity: true,
     recycleStatus: receipt.status, sameReceiptOnRepeat: true, sourceRecoverableInRecycleBin: true,
-    folderOpenReceipt: true, hostRelinkAndSaveTested: false, userMediaTouched: false, folder };
+    folderOpenReceipt: reveal, completedCredentialRemoved: true, hostRelinkAndSaveTested: false, userMediaTouched: false, folder };
   await fs.writeFile(path.join(folder, "验收结果.json"), JSON.stringify(evidence, null, 2), { flag: "wx" });
   console.log(JSON.stringify(evidence));
 }

@@ -57,11 +57,11 @@ test("状态写入使用乐观修订号和已恢复备份的上下文", () => {
   assert.match(source, /MATERIAL_BATCH_STORAGE_STALE_LOCK/);
   assert.match(source, /validate:\s*function \(value\) \{ return State\.validateStoredState\(value\); \}/);
   const missingStateBranch = source.indexOf("if (loaded.missing)");
-  const existingMediaRootGuard = source.indexOf("await Transaction.exists(fs, reservedMediaRoot)", missingStateBranch);
+  const existingMediaRootGuard = source.indexOf("await Workspace.inspectExistingMedia(fs, nextContext.workspaceRoot)", missingStateBranch);
   const freshStateCreation = source.indexOf("State.createState(nextContext.workspaceRoot", missingStateBranch);
   assert.ok(missingStateBranch >= 0);
   assert.ok(existingMediaRootGuard > missingStateBranch && existingMediaRootGuard < freshStateCreation);
-  assert.match(source, /MATERIAL_BATCH_STATE_LOST/);
+  assert.match(fs.readFileSync(path.join(__dirname, "..", "src", "workspace-session.js"), "utf8"), /MATERIAL_BATCH_STATE_LOST/);
 });
 
 test("映射重链接会在操作前后对同一路径执行严格目标指纹核验", () => {
@@ -119,8 +119,8 @@ test("运行时统一使用兼容 UXP 的缺失路径判断", () => {
 });
 
 test("同一保护文件夹不能重新映射到第二个素材库 ID", () => {
-  assert.match(source, /samePathMapping && samePathMapping\.libraryId !== libraryId/);
-  assert.match(source, /这个目录已经在不搬动列表中/);
+  assert.match(source, /effectiveProtectedLibraries\(\)\.some/);
+  assert.match(source, /throw protectedFolderOverlapError/);
 });
 
 test("缺少可靠文件身份的文件会成为可处理的审核项", () => {
