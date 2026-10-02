@@ -77,6 +77,7 @@
   async function inventoryProject(ppro, project) {
     var rootItem = await project.getRootItem();
     var entries = [];
+    var nonMediaItems = [];
     var warnings = [];
     var seenItemIds = new Set();
     var seenFolders = new Set();
@@ -112,7 +113,11 @@
 
         try {
           var clip = await castClip(ppro, item);
-          if (clip == null) continue;
+          if (clip === null) {
+            nonMediaItems.push({ itemId: itemId, itemName: String(item.name || "未命名项目项") });
+            continue;
+          }
+          if (!clip) throw new Error("Premiere 未返回明确的素材类型");
           var sequence = await clip.isSequence();
           if (sequence === true) continue;
           if (sequence !== false) throw new Error("无法确认项目项是否为序列");
@@ -134,7 +139,7 @@
     }
 
     await visit(rootItem);
-    return { entries: entries, warnings: warnings };
+    return { entries: entries, nonMediaItems: nonMediaItems, warnings: warnings };
   }
 
   function assertCompleteInventory(inventory) {
@@ -161,8 +166,18 @@
     return Boolean(context && context.identity === expectedIdentity);
   }
 
-  async function verifyNoTimelineSourceReferences(ppro, project, sourcePath, cleanupPath) {
+  async function readBoolean(item, method) {
+    if (!item || typeof item[method] !== "function") throw new Error("无法核对轨道素材状态");
+    var result = await item[method]();
+    if (result !== true && result !== false) throw new Error("轨道素材状态没有返回明确结果");
+    return result;
+  }
+
+  async function verifyNoTimelineSourceReferences(ppro, project, sourcePath, cleanupPath, inventory) {
     if (!project || typeof project.getSequences !== "function") throw new Error("无法读取全部序列，原素材保留");
+    inventory = inventory || await inventoryProject(ppro, project);
+    assertCompleteInventory(inventory);
+    var nonMediaIds = new Set((inventory.nonMediaItems || []).map(function (item) { return String(item.itemId); }));
     var visited = new Set();
     async function visit(sequence) {
       if (!sequence || !sequence.guid) throw new Error("序列身份不完整，原素材保留");
@@ -177,14 +192,42 @@
           var items = await track.getTrackItems(ppro.Constants.TrackItemType.CLIP, false);
           if (!Array.isArray(items)) throw new Error("轨道素材列表不完整，原素材保留");
           for (var item of items) {
-            var clip = await castClip(ppro, await item.getProjectItem());
-            if (!clip) throw new Error("轨道素材类型无法核对，原素材保留");
-            if (typeof clip.isMergedClip === "function" && await clip.isMergedClip()) throw new Error("存在无法展开核对的合并素材，原素材保留");
-            if (await clip.isSequence()) await visit(await clip.getSequence());
-            else {
-              var mediaPath = await clip.getMediaFilePath();
-              if (typeof mediaPath !== "string" || !mediaPath) throw new Error("轨道素材路径无法读取，原素材保留");
-              if (Core.samePath(mediaPath, sourcePath) || (cleanupPath && Core.samePath(mediaPath, cleanupPath))) throw new Error("时间线仍引用原位置，原素材未回收");
+            var projectItem = null;
+            try {
+              // Adjustment layers have no disk source. Other null casts are
+              // exempt only when a complete bin snapshot identified that ID.
+              if (kind === "Video" && typeof item.isAdjustmentLayer === "function"
+                && await readBoolean(item, "isAdjustmentLayer")) continue;
+              projectItem = await item.getProjectItem();
+              var itemId = await readItemId(projectItem);
+              var clip = await castClip(ppro, projectItem);
+              if (clip === null && nonMediaIds.has(itemId)) continue;
+              if (!clip) throw new Error("轨道素材类型无法核对，原素材保留");
+              if (typeof clip.isMergedClip === "function" && await readBoolean(clip, "isMergedClip")) {
+                throw new Error("存在无法展开核对的合并素材，原素材保留");
+              }
+              if (await readBoolean(clip, "isSequence")) await visit(await clip.getSequence());
+              else {
+                if (typeof clip.isMulticamClip === "function" && await readBoolean(clip, "isMulticamClip")) {
+                  throw new Error("存在无法展开核对的多机位素材，原素材保留");
+                }
+                var rawPath = await clip.getMediaFilePath();
+                var mediaPath = typeof rawPath === "string" ? Core.toFileSystemPath(rawPath) : "";
+                if (!mediaPath) throw new Error("轨道素材路径无法读取，原素材保留");
+                if (Core.samePath(mediaPath, sourcePath) || (cleanupPath && Core.samePath(mediaPath, cleanupPath))) {
+                  throw new Error("时间线仍引用原位置，原素材未回收");
+                }
+              }
+            } catch (error) {
+              if (error && error.code === "MATERIAL_BATCH_TIMELINE_UNREADABLE") throw error;
+              var location = "序列 " + String(sequence.name || id) + " / " + (kind === "Audio" ? "音轨 " : "视频轨 ") + (index + 1);
+              var name = String(projectItem && projectItem.name || item && item.name || "").slice(0, 120);
+              var reason = /[\u3400-\u9fff]/.test(String(error && error.message || ""))
+                ? error.message : "此轨道项无法完整核对，原素材保留";
+              var unreadable = new Error(reason + "；位置：" + location + (name ? "（" + name + "）" : ""));
+              unreadable.code = "MATERIAL_BATCH_TIMELINE_UNREADABLE";
+              unreadable.cause = error;
+              throw unreadable;
             }
           }
         }

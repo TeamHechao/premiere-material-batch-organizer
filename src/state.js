@@ -906,6 +906,58 @@
     })[0] || null;
   }
 
+  function isTimelineCleanupRetryCandidate(item) {
+    var reason = "目标已就绪，原文件待回收：轨道素材类型无法核对，原素材保留";
+    return Boolean(item && item.id && item.status === "cleanup-pending"
+      && item.deleteSource === true && item.resumeAutomatic === true && item.error === reason
+      && validBackgroundTask(item.backgroundTask) && item.backgroundTask.kind === "held"
+      && item.backgroundTask.message === reason && !hasOwn(item, "timelineCleanupRetry")
+      && !item.recycleRequest && !item.recycleReceipt
+      && (item.recycleAttempts == null || (Array.isArray(item.recycleAttempts) && item.recycleAttempts.length === 0))
+      && Core.isAbsoluteLocalPath(item.sourcePath) && !Core.isProjectFile(item.sourcePath)
+      && Core.isAbsoluteLocalPath(item.targetPath) && !Core.samePath(item.sourcePath, item.targetPath)
+      && Core.isAbsoluteLocalPath(item.projectPath) && Core.isProjectFile(item.projectPath)
+      && typeof item.projectIdentity === "string" && item.projectIdentity
+      && Core.isSafeRelativePath(item.targetRelativePath)
+      && Array.isArray(item.itemIds) && item.itemIds.length === item.itemCount && item.itemIds.length > 0
+      && item.itemIds.every(function (id) { return typeof id === "string" && id.trim(); })
+      && new Set(item.itemIds).size === item.itemIds.length);
+  }
+
+  function requeueTimelineCleanup(state, transactionId, at, verifiedOwner) {
+    if (state.pendingTransaction || state.pendingProjectSave) throw new Error("当前操作尚未完成，不能接续旧记录");
+    var next = clone(state);
+    var item = (next.deferredTransactions || []).find(function (entry) { return entry.id === transactionId; });
+    if (!isTimelineCleanupRetryCandidate(item)) throw new Error("这条记录不能自动接续");
+    item.timelineCleanupRetry = { version: 1, queuedAt: iso(at), previousError: item.error,
+      previousProjectPath: item.projectPath, previousProjectIdentity: item.projectIdentity, previousTargetPath: item.targetPath };
+    if (verifiedOwner) {
+      if (!Core.isAbsoluteLocalPath(verifiedOwner.projectPath) || !Core.isProjectFile(verifiedOwner.projectPath)
+        || typeof verifiedOwner.projectIdentity !== "string" || !verifiedOwner.projectIdentity) {
+        throw new Error("已核验的工程归属无效");
+      }
+      if (!Core.samePath(verifiedOwner.targetPath, Core.joinNativePath(Core.dirname(verifiedOwner.projectPath), item.targetRelativePath))) {
+        throw new Error("已核验的目标位置超出工程归属");
+      }
+      item.projectPath = verifiedOwner.projectPath;
+      item.projectIdentity = verifiedOwner.projectIdentity;
+      item.targetPath = verifiedOwner.targetPath;
+    }
+    item.backgroundTask = Object.assign({}, item.backgroundTask, { kind: "cleanup", nextAttemptAt: iso(at), message: "正在重新核验并接续原件回收" });
+    return touch(next, at);
+  }
+
+  function holdTimelineCleanupRetry(state, transactionId, reason, at) {
+    if (state.pendingTransaction || state.pendingProjectSave) throw new Error("当前操作尚未完成，不能接续旧记录");
+    var next = clone(state);
+    var item = (next.deferredTransactions || []).find(function (entry) { return entry.id === transactionId; });
+    if (!isTimelineCleanupRetryCandidate(item)) throw new Error("这条记录不能自动接续");
+    item.timelineCleanupRetry = { version: 1, checkedAt: iso(at), previousError: item.error };
+    item.error = "目标已就绪，原文件待回收：" + reason;
+    item.backgroundTask.message = item.error;
+    return touch(next, at);
+  }
+
   function prepareCollectionBatch(state, at) {
     if (state.pendingTransaction || state.pendingProjectSave) throw new Error("当前操作尚未完成，不能切换素材文件夹");
     var active = currentBatch(state);
@@ -982,6 +1034,9 @@
     requestNextBatch: requestNextBatch,
     deferTransaction: deferTransaction,
     nextBackgroundCleanup: nextBackgroundCleanup,
+    isTimelineCleanupRetryCandidate: isTimelineCleanupRetryCandidate,
+    requeueTimelineCleanup: requeueTimelineCleanup,
+    holdTimelineCleanupRetry: holdTimelineCleanupRetry,
     resumeDeferred: resumeDeferred,
     prepareCollectionBatch: prepareCollectionBatch,
     markCleanupPending: markCleanupPending,
