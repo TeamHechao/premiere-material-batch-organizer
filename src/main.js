@@ -1635,8 +1635,104 @@
     catch (error) { return false; }
   }
 
+  function sameStoredProjectGuid(previousIdentity, currentIdentity) {
+    var pattern = /\|guid:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+    var previous = pattern.exec(String(previousIdentity || ""));
+    var current = pattern.exec(String(currentIdentity || ""));
+    return Boolean(previous && current && previous[1].toLowerCase() === current[1].toLowerCase());
+  }
+
+  async function requeueFixedTimelineCleanupUnlocked() {
+    var candidates = (projectState.deferredTransactions || []).filter(function (item) {
+      return State.isTimelineCleanupRetryCandidate(item)
+        && Transaction.hasStrongFileIdentity(item.sourceFingerprint) && Transaction.hasStrongFileIdentity(item.targetFingerprint)
+        && !recoverySourceBlockReason(item.sourcePath)
+        && ((Core.samePath(item.projectPath, context.projectPath) && item.projectIdentity === context.identity)
+          || sameStoredProjectGuid(item.projectIdentity, context.identity));
+    });
+    if (!candidates.length) return;
+    var identity = context.identity;
+    var projectPath = context.projectPath;
+    var generation = lifecycleGuard.current();
+    if (await previewIsMoving()) return;
+    var owned = [];
+    for (var candidate of candidates) {
+      var sameOwner = Core.samePath(candidate.projectPath, projectPath) && candidate.projectIdentity === identity;
+      // A renamed or relocated project must retain its GUID and the original
+      // document must be absent. An existing Save As copy never inherits it.
+      if (!sameOwner && (Core.samePath(candidate.projectPath, projectPath)
+        || await Transaction.exists(fs, candidate.projectPath)
+        || !Core.samePath(candidate.targetPath, Core.joinNativePath(Core.dirname(candidate.projectPath), candidate.targetRelativePath)))) continue;
+      owned.push(candidate);
+    }
+    if (!owned.length) return;
+    async function assertRetryContext() {
+      if (!panelVisible || !lifecycleGuard.isCurrent(generation) || !currentAutoSetting()
+        || !context || context.identity !== identity || !Core.samePath(context.projectPath, projectPath)
+        || !(await Premiere.contextStillActive(ppro, identity))) {
+        var switched = new Error("工程或面板已切换，未接续旧素材回收");
+        switched.code = "MATERIAL_BATCH_CONTEXT_CHANGED";
+        throw switched;
+      }
+    }
+    await assertRetryContext();
+    await checkRecycleAvailability(generation);
+    var inventory = await Premiere.inventoryProject(ppro, context.project);
+    Premiere.assertCompleteInventory(inventory);
+    var before = projectState;
+    var next = projectState;
+    var queued = 0;
+    var held = 0;
+    for (var item of owned) {
+      await assertRetryContext();
+      var targetPath = targetPathForMapping(item);
+      var targetStat;
+      try { targetStat = await Transaction.lstatForIdentity(fs, targetPath); }
+      catch (error) {
+        var missing = Core.isMissingPathError(error);
+        if (!missing && ["EACCES", "EPERM", "EBUSY", "EIO"].indexOf(String(error && error.code || "")) < 0) throw error;
+        next = State.holdTimelineCleanupRetry(next, item.id,
+          missing ? "新位置文件不存在，原文件保留" : "新位置文件无法读取，原文件保留", new Date());
+        held += 1;
+        continue;
+      }
+      if (!targetStat || typeof targetStat.isFile !== "function" || !targetStat.isFile()
+        || !Transaction.sameStrongPathFingerprint(item.targetFingerprint, Transaction.fingerprintFromStat(targetStat))) {
+        next = State.holdTimelineCleanupRetry(next, item.id, "新位置文件身份已变化，原文件保留", new Date());
+        held += 1;
+        continue;
+      }
+      var references = inventory.entries.filter(function (entry) {
+        return item.itemIds.indexOf(String(entry.itemId)) >= 0
+          || Core.samePath(entry.mediaPath, item.sourcePath) || Core.samePath(entry.mediaPath, targetPath);
+      });
+      var referenceIds = references.map(function (entry) { return String(entry.itemId); });
+      if (references.length !== item.itemCount || new Set(referenceIds).size !== item.itemCount
+        || item.itemIds.some(function (id) { return referenceIds.indexOf(id) < 0; })
+        || references.some(function (entry) { return !Core.samePath(entry.mediaPath, item.sourcePath) && !Core.samePath(entry.mediaPath, targetPath); })) {
+        next = State.holdTimelineCleanupRetry(next, item.id, "当前工程的素材引用与旧记录不一致，原文件保留", new Date());
+        held += 1;
+        continue;
+      }
+      await assertRetryContext();
+      next = State.requeueTimelineCleanup(next, item.id, new Date(), {
+        projectPath: projectPath, projectIdentity: identity, targetPath: targetPath,
+      });
+      queued += 1;
+    }
+    if (!queued && !held) return;
+    await assertRetryContext();
+    projectState = queued ? State.addActivity(next, "info", "已接续 " + queued + " 项待回收素材", new Date(), {
+      summary: "重新核验已有文件和工程链接，不重复复制",
+    }) : next;
+    try { assertCheckpointWriteVerified(await persistState(), "接续记录未可靠保存，原素材保持原位"); }
+    catch (error) { projectState = before; throw error; }
+  }
+
   async function runBackgroundCleanupUnlocked() {
-    if (!panelVisible || !currentAutoSetting() || !currentProjectSetup() || !currentProtectionSetup() || storageWarning || stateReloadRequired) return;
+    if (!panelVisible || !currentAutoSetting() || !currentProjectSetup() || !currentProtectionSetup() || storageWarning || stateReloadRequired
+      || State.needsCollectionPolicyAcceptance(projectState) || unresolvedProtectedLibraries().length) return;
+    await requeueFixedTimelineCleanupUnlocked();
     var count = (projectState.deferredTransactions || []).length;
     for (var index = 0; index < count; index += 1) {
       var next = State.nextBackgroundCleanup(projectState, context.projectPath, context.identity, new Date());
@@ -2656,7 +2752,7 @@
     }
     var inventory = await Premiere.inventoryProject(ppro, context.project);
     Premiere.assertCompleteInventory(inventory);
-    if (typeof Premiere.verifyNoTimelineSourceReferences === "function") await Premiere.verifyNoTimelineSourceReferences(ppro, context.project, sourcePath, cleanupPath);
+    if (typeof Premiere.verifyNoTimelineSourceReferences === "function") await Premiere.verifyNoTimelineSourceReferences(ppro, context.project, sourcePath, cleanupPath, inventory);
     var expectedIds = (expectedItemIds || []).map(String).filter(Boolean);
     if (!expectedIds.length || new Set(expectedIds).size !== expectedIds.length) {
       throw new Error("删除原素材前缺少完整且唯一的素材项身份");

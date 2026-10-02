@@ -641,6 +641,7 @@ function createProtectedFolderHarness(folderError, localSettingsError, stateWrit
       },
       assertCompleteInventory() {},
       previewPosition: harnessOptions.previewPosition,
+      verifyNoTimelineSourceReferences: harnessOptions.verifyNoTimelineSourceReferences,
       groupByMediaPath(entries) {
         if (typeof harnessOptions.groupByMediaPath === "function") return harnessOptions.groupByMediaPath(entries);
         const groups = new Map();
@@ -1584,7 +1585,7 @@ function createOrdinarySafetyFixture(options = {}) {
 
 function backgroundCleanupFixture(options = {}) {
   const root = "E:\\后台整理测试";
-  let saves = 0, recycleCalls = 0, copies = 0, queryCalls = 0;
+  let saves = 0, recycleCalls = 0, copies = 0, queryCalls = 0, comparisons = 0, healthChecks = 0;
   let locked = options.locked !== false, live = true;
   const context = projectContext(root, "后台.prproj", { async save() {
     saves++;
@@ -1592,6 +1593,7 @@ function backgroundCleanupFixture(options = {}) {
     if (options.onSave) return options.onSave(saves);
     return true;
   } });
+  if (options.guid) context.identity += "|guid:" + options.guid;
   const files = new Map();
   files.set(context.projectPath, { size: 300, mtimeMs: 1000, ctimeMs: 1000, birthtimeMs: 900, dev: "2", ino: "999" });
   const clips = (options.names || ["a.gif", "b.wav"]).map((name, i) => {
@@ -1608,7 +1610,7 @@ function backgroundCleanupFixture(options = {}) {
   const sharedLocalStorage = createSharedLocalStorage([[MACHINE_SETTINGS_V2_KEY, JSON.stringify(projectMachineSettings(state, context.projectPath))]]);
   const results = new Map();
   const bridge = { create: opts => ({
-    async checkAvailability() { return { status: "available" }; },
+    async checkAvailability() { healthChecks++; return { status: "available" }; },
     async query(request) { queryCalls++; return options.queryResult || { state: "result", value: results.get(request.id) }; },
     async revealDirectory() {},
     async recycle(request) {
@@ -1631,6 +1633,8 @@ function backgroundCleanupFixture(options = {}) {
     context, stateStore, sharedLocalStorage, recycleBridge: bridge,
     contextStillActive() { return live; },
     fileService: { ...require("../src/file-service"), async compareFiles({ sourcePath, targetPath }) {
+      comparisons++;
+      if (options.onCompare) await options.onCompare({ sourcePath, targetPath, files });
       return { sourceFingerprint: { ...files.get(sourcePath), sha256: "c".repeat(64) },
         targetFingerprint: { ...files.get(targetPath), sha256: "c".repeat(64) } };
     } },
@@ -1642,7 +1646,7 @@ function backgroundCleanupFixture(options = {}) {
     inventoryEntries: () => clips.map((clip, i) => ({ itemId: "clip-" + i, itemName: clip.name, mediaPath: clip.mediaPath, clip })),
     lstatResultForPath(p) {
       if (files.has(p)) return { ...files.get(p), isFile: () => true, isDirectory: () => false };
-      if (p.startsWith(root) && !/\.[^\\]+$/.test(p)) return { isFile: () => false, isDirectory: () => true, dev: "2" };
+      if (p.startsWith(context.workspaceRoot) && !/\.[^\\]+$/.test(p)) return { isFile: () => false, isDirectory: () => true, dev: "2" };
       throw Object.assign(new Error("missing"), { code: "ENOENT" });
     },
     onCopyFile(from, to) { copies++; files.set(to, { ...files.get(from), dev: "2", ino: String(1000 + copies) }); },
@@ -1653,8 +1657,232 @@ function backgroundCleanupFixture(options = {}) {
   return { makeHarness, files, clips, results, stateStore, sharedLocalStorage, context,
     release() { locked = false; }, switchAway() { live = false; },
     due() { stateStore.value.deferredTransactions[0].backgroundTask.nextAttemptAt = new Date(0).toISOString(); },
-    get saves() { return saves; }, get copies() { return copies; }, get recycleCalls() { return recycleCalls; }, get queryCalls() { return queryCalls; } };
+    get saves() { return saves; }, get copies() { return copies; }, get recycleCalls() { return recycleCalls; }, get queryCalls() { return queryCalls; },
+    get comparisons() { return comparisons; }, get healthChecks() { return healthChecks; } };
 }
+
+const legacyTimelineError = "轨道素材类型无法核对，原素材保留";
+
+async function legacyTimelineFixture(options = {}) {
+  const f = backgroundCleanupFixture({ locked: false, ...options });
+  const h = f.makeHarness({ verifyNoTimelineSourceReferences: async () => { throw new Error(legacyTimelineError); } });
+  try {
+    await h.entrypoints.show();
+    assert.equal(h.latestState.deferredTransactions.length, f.clips.length, h.diagnostics.join("\n"));
+    assert.ok(h.latestState.deferredTransactions.every(record => State.isTimelineCleanupRetryCandidate(record)));
+    assert.equal(f.recycleCalls, 0);
+    assert.equal(f.comparisons, 0);
+  } finally { h.entrypoints.hide(); }
+  return f;
+}
+
+test("旧版轨道类型误拦记录重开后自动核验、保存和回收，不再复制或弹确认", async () => {
+  const f = await legacyTimelineFixture();
+  let timelineChecks = 0;
+  const h = f.makeHarness({ async verifyNoTimelineSourceReferences(_ppro, _project, _source, _cleanup, inventory) {
+    assert.ok(inventory.entries.length, "复用完整素材箱快照");
+    timelineChecks++;
+  } });
+  try {
+    await h.entrypoints.show();
+    assert.equal(h.latestState.pendingTransaction, null, h.diagnostics.join("\n"));
+    assert.equal(h.latestState.deferredTransactions.length, 0, h.diagnostics.join("\n"));
+    assert.equal(h.latestState.transactions.length, 2);
+    assert.equal(f.copies, 2);
+    assert.equal(f.recycleCalls, 2);
+    assert.equal(f.comparisons, 2);
+    assert.equal(f.saves, 2, "重新打开后整批只新增一次保存");
+    assert.ok(timelineChecks >= 2);
+    assert.equal(h.autoCollectToggle.checked, true);
+    assert.equal(h.confirmMessages.length, 0);
+    for (const record of h.latestState.transactions) {
+      assert.equal(f.files.has(record.sourcePath), false);
+      assert.equal(f.files.has(record.targetPath), true);
+    }
+  } finally { h.entrypoints.hide(); }
+});
+
+test("接续时仍有未知轨道项只暂缓一次，连续重开不反复保存或检查助手", async () => {
+  const f = await legacyTimelineFixture();
+  let h = f.makeHarness({ verifyNoTimelineSourceReferences: async () => { throw new Error(legacyTimelineError); } });
+  await h.entrypoints.show(); h.entrypoints.hide();
+  assert.ok(h.latestState.deferredTransactions.every(record => record.timelineCleanupRetry && record.backgroundTask.kind === "held"));
+  const saves = f.saves, checks = f.healthChecks;
+  h = f.makeHarness(); await h.entrypoints.show();
+  try {
+    assert.equal(f.copies, 2);
+    assert.equal(f.recycleCalls, 0);
+    assert.equal(f.saves, saves);
+    assert.equal(f.healthChecks, checks);
+    assert.equal(h.confirmMessages.length, 0);
+  } finally { h.entrypoints.hide(); }
+});
+
+test("保留原件、暂停、保护名单和其他工程的旧记录均不自动回收", async t => {
+  for (const mode of ["keep", "pause", "protected", "other-project", "no-identity", "recycle-attempt"]) {
+    await t.test(mode, async () => {
+      const f = await legacyTimelineFixture();
+      const records = f.stateStore.value.deferredTransactions;
+      const settings = JSON.parse(f.sharedLocalStorage.getItem(MACHINE_SETTINGS_V2_KEY));
+      if (mode === "keep") records.forEach(record => { record.deleteSource = false; });
+      if (mode === "pause") settings.autoByProject[workspaceSettingKey(f.context.projectPath)] = false;
+      if (mode === "protected") settings.protectedMappings = [{ libraryId: "downloads", label: "保留库", rootPath: "C:\\Downloads" }];
+      if (mode === "other-project") records.forEach(record => {
+        record.projectPath = "E:\\后台整理测试\\其他.prproj";
+        record.projectIdentity = "path:e:\\后台整理测试\\其他.prproj";
+      });
+      if (mode === "no-identity") records.forEach(record => { record.targetFingerprint.ino = "0"; });
+      if (mode === "recycle-attempt") records.forEach(record => { record.recycleAttempts = [{ request: { id: "old" } }]; });
+      f.sharedLocalStorage.setItem(MACHINE_SETTINGS_V2_KEY, JSON.stringify(settings));
+      const h = f.makeHarness();
+      try {
+        await h.entrypoints.show();
+        assert.equal(f.copies, 2);
+        assert.equal(f.saves, 1);
+        assert.equal(f.recycleCalls, 0);
+        assert.ok(h.latestState.deferredTransactions.every(record => record.backgroundTask.kind === "held" && !record.timelineCleanupRetry));
+      } finally { h.entrypoints.hide(); }
+    });
+  }
+});
+
+test("旧记录目标缺失或身份变化只暂缓该项，另一项照常完成且不会持续预检", async t => {
+  for (const mode of ["missing", "replaced", "references", "permission"]) {
+    await t.test(mode, async () => {
+      const f = await legacyTimelineFixture();
+      const target = f.clips[0].mediaPath;
+      if (mode === "missing") f.files.delete(target);
+      if (mode === "replaced") f.files.get(target).ino = "99999";
+      const overrides = {};
+      if (mode === "references") overrides.inventoryEntries = () => f.clips.map((clip, i) => ({
+        itemId: i === 0 ? "replacement" : "clip-" + i, itemName: clip.name, mediaPath: clip.mediaPath, clip,
+      }));
+      if (mode === "permission") overrides.transaction = { ...Transaction, async lstatForIdentity(fs, path) {
+        if (path === target) throw Object.assign(new Error("permission denied"), { code: "EACCES" });
+        return Transaction.lstatForIdentity(fs, path);
+      }, cleanupVerifiedSource: opts => Transaction.cleanupVerifiedSource({ ...opts, wait: async () => {} }) };
+      let h = f.makeHarness(overrides); await h.entrypoints.show(); h.entrypoints.hide();
+      assert.equal(f.recycleCalls, 1, h.diagnostics.join("\n"));
+      assert.equal(f.files.has("C:\\Downloads\\a.gif"), true);
+      assert.equal(f.files.has("C:\\Downloads\\b.wav"), false);
+      assert.equal(h.latestState.deferredTransactions.length, 1);
+      assert.equal(h.latestState.deferredTransactions[0].backgroundTask.kind, "held");
+      assert.equal(h.latestState.deferredTransactions[0].timelineCleanupRetry.version, 1);
+      assert.match(h.latestState.deferredTransactions[0].error, /不存在|变化|不一致|无法读取/);
+      const checks = f.healthChecks, saves = f.saves;
+      h = f.makeHarness(); await h.entrypoints.show();
+      try { assert.equal(f.healthChecks, checks); assert.equal(f.saves, saves); assert.equal(f.copies, 2); }
+      finally { h.entrypoints.hide(); }
+    });
+  }
+});
+
+test("接续仍完整核验内容，同大小内容不同不回收原件", async () => {
+  const f = await legacyTimelineFixture({ onCompare: async () => { throw new Error("两处文件内容不同，已保留两份文件"); } });
+  const h = f.makeHarness();
+  try {
+    await h.entrypoints.show();
+    assert.equal(f.recycleCalls, 0);
+    assert.equal(f.comparisons, 2);
+    assert.equal(f.copies, 2);
+    assert.ok(h.latestState.deferredTransactions.every(record => record.backgroundTask.kind === "held" && /内容不同/.test(record.error)));
+    assert.equal(f.files.has("C:\\Downloads\\a.gif"), true);
+  } finally { h.entrypoints.hide(); }
+});
+
+test("接续前记录写锁或安全复核失败不能补链、保存或回收", async t => {
+  for (const result of ["conflict", "warning"]) {
+    await t.test(result, async () => {
+      const f = await legacyTimelineFixture();
+      const h = f.makeHarness({ stateWriteResult(_count, state) {
+        if (!state.deferredTransactions.some(record => record.timelineCleanupRetry)) return;
+        if (result === "conflict") throw Object.assign(new Error("record conflict"), { code: "MATERIAL_BATCH_STORAGE_CONFLICT" });
+        return { warning: "锁释放未确认" };
+      } });
+      try {
+        await h.entrypoints.show();
+        assert.equal(f.saves, 1);
+        assert.equal(f.recycleCalls, 0);
+        assert.equal(f.copies, 2);
+        assert.equal(h.autoCollectToggle.checked, false);
+        assert.equal(f.files.has("C:\\Downloads\\a.gif"), true);
+      } finally { h.entrypoints.hide(); }
+    });
+  }
+});
+
+test("接续重新保存失败只尝试一次，全部原件保留", async () => {
+  const f = await legacyTimelineFixture({ onSave: count => count === 1 });
+  const h = f.makeHarness();
+  try {
+    await h.entrypoints.show();
+    assert.equal(f.saves, 2);
+    assert.equal(f.recycleCalls, 0);
+    assert.equal(f.copies, 2);
+    assert.equal(h.autoCollectToggle.checked, false);
+    assert.ok(h.latestState.pendingTransaction);
+    assert.equal(f.files.has("C:\\Downloads\\a.gif"), true);
+    assert.equal(f.files.has("C:\\Downloads\\b.wav"), true);
+  } finally { h.entrypoints.hide(); }
+});
+
+test("全部候选核验后再次检查上下文，切换或关闭不能写接续记录和回收", async t => {
+  for (const action of ["switch", "hide"]) {
+    await t.test(action, async () => {
+      const f = await legacyTimelineFixture();
+      const lastTarget = f.clips[1].mediaPath;
+      let h;
+      h = f.makeHarness({ transaction: { ...Transaction, async lstatForIdentity(fs, path) {
+        const stat = await Transaction.lstatForIdentity(fs, path);
+        if (path === lastTarget) { if (action === "switch") f.switchAway(); else h.entrypoints.hide(); }
+        return stat;
+      } } });
+      try {
+        await h.entrypoints.show();
+        assert.equal(f.saves, 1);
+        assert.equal(f.recycleCalls, 0);
+        assert.ok(f.stateStore.value.deferredTransactions.every(record => !record.timelineCleanupRetry));
+      } finally { h.entrypoints.hide(); }
+    });
+  }
+});
+
+test("工程改名或目录移动按GUID、原工程缺失、相对目标和全部引用唯一核验后接续", async t => {
+  for (const mode of ["rename", "relocate", "save-as", "wrong-guid"]) {
+    await t.test(mode, async () => {
+      const guid = "174de708-8299-412c-9e1b-27ed8eb982f1";
+      const f = await legacyTimelineFixture({ guid });
+      const oldPath = f.context.projectPath;
+      const nextRoot = mode === "relocate" ? "E:\\接手工程" : f.context.workspaceRoot;
+      const newPath = Core.joinNativePath(nextRoot, "改名.prproj");
+      f.files.set(newPath, f.files.get(oldPath));
+      if (mode !== "save-as") f.files.delete(oldPath);
+      Object.assign(f.context, { projectPath: newPath, projectName: "改名.prproj", workspaceRoot: nextRoot,
+        identity: "path:" + Core.normalizePathForComparison(newPath) + "|guid:" + (mode === "wrong-guid" ? "574de708-8299-412c-9e1b-27ed8eb982f1" : guid) });
+      f.context.project.path = newPath;
+      for (const record of f.stateStore.value.deferredTransactions) {
+        const newTarget = Core.joinNativePath(nextRoot, record.targetRelativePath);
+        const data = f.files.get(record.targetPath);
+        f.files.delete(record.targetPath); f.files.set(newTarget, data);
+        f.clips.find(clip => clip.mediaPath === record.targetPath).mediaPath = newTarget;
+      }
+      const settings = JSON.parse(f.sharedLocalStorage.getItem(MACHINE_SETTINGS_V2_KEY));
+      for (const key of ["autoByProject", "projectSetupByProject", "protectedRevisionByProject"]) {
+        settings[key][workspaceSettingKey(newPath)] = settings[key][workspaceSettingKey(oldPath)];
+      }
+      f.sharedLocalStorage.setItem(MACHINE_SETTINGS_V2_KEY, JSON.stringify(settings));
+      const h = f.makeHarness();
+      try {
+        await h.entrypoints.show();
+        const allowed = ["rename", "relocate"].includes(mode);
+        assert.equal(f.recycleCalls, allowed ? 2 : 0, h.diagnostics.join("\n"));
+        assert.equal(f.copies, 2);
+        if (allowed) assert.ok(h.latestState.transactions.every(record => Core.samePath(record.projectPath, newPath)));
+        else assert.ok(h.latestState.deferredTransactions.every(record => !record.timelineCleanupRetry));
+      } finally { h.entrypoints.hide(); }
+    });
+  }
+});
 
 test("先列清单不复制，默认全转移，逐项保留原件且同一轮只保存一次", async () => {
   const f = backgroundCleanupFixture({ locked: false, reviewManually: true });
